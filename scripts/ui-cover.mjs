@@ -6,9 +6,36 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function dataUri(file) {
+function dataUri(relativePath) {
+  const file = path.join(root, relativePath);
   return `data:image/${path.extname(file).slice(1).replace('jpg', 'jpeg')};base64,${fs.readFileSync(file).toString('base64')}`;
 }
+
+const stations = [
+  { image: 'public/devices/lite2-green.webp', title: 'Лайт 2', note: 'проверено', accent: true },
+  { image: 'public/devices/lite.webp', title: 'Лайт', note: 'первая Лайт' },
+  { image: 'public/devices/mini.webp', title: 'Мини 3', note: 'Мини' },
+  { image: 'public/devices/mini-pro.webp', title: 'Мини 3 Про', note: 'Мини' },
+  { image: 'public/devices/mini-clock.webp', title: 'Мини с часами', note: 'Мини' },
+  { image: 'public/devices/mini-old.webp', title: 'Мини', note: 'первая Мини' },
+  { image: 'public/devices/max.webp', title: 'Макс', note: 'Макс' },
+  { image: 'public/devices/station2.webp', title: 'Станция 2', note: 'Станция' },
+  { image: 'public/devices/station3.webp', title: 'Станция 3', note: 'Станция' },
+  { image: 'public/devices/duo-max.webp', title: 'Дуо Макс', note: 'Станция' },
+  { image: 'public/devices/midi.webp', title: 'Миди', note: 'Станция' },
+  { image: 'public/devices/street.webp', title: 'Стрит', note: 'Станция' },
+];
+
+const cards = stations
+  .map(
+    (station) => `
+      <article class="card${station.accent ? ' card--accent' : ''}">
+        <div class="card-media"><img src="${dataUri(station.image)}" alt=""></div>
+        <div class="card-title">${station.title}</div>
+        <div class="card-note">${station.accent ? '<i></i>' : ''}${station.note}</div>
+      </article>`,
+  )
+  .join('');
 
 const cover = `<!doctype html>
 <html lang="ru">
@@ -18,7 +45,7 @@ const cover = `<!doctype html>
   * { box-sizing: border-box; }
   html, body { width: 1600px; height: 900px; margin: 0; overflow: hidden; }
   body {
-    background: #08110d;
+    background: #07110c;
     color: #f1f8f3;
     font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
@@ -27,100 +54,129 @@ const cover = `<!doctype html>
   .grid {
     position: absolute; inset: -20%;
     background-image:
-      linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+      linear-gradient(rgba(255,255,255,.032) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.032) 1px, transparent 1px);
     background-size: 64px 64px;
-    transform: perspective(900px) rotateX(58deg) translateY(210px) scale(1.4);
-    mask-image: radial-gradient(circle at 65% 45%, rgba(0,0,0,.9), transparent 68%);
+    transform: perspective(900px) rotateX(58deg) translateY(220px) scale(1.4);
+    mask-image: radial-gradient(circle at 68% 42%, rgba(0,0,0,.9), transparent 66%);
   }
-  .glow { position: absolute; border-radius: 50%; filter: blur(4px); }
+  .glow { position: absolute; border-radius: 50%; }
   .glow--green {
-    width: 940px; height: 940px; right: -120px; top: -70px;
-    background: radial-gradient(circle at 50% 50%, rgba(82,222,143,.34), rgba(8,17,13,0) 66%);
+    width: 1020px; height: 1020px; right: -260px; top: -260px;
+    background: radial-gradient(circle at 50% 50%, rgba(82,222,143,.26), rgba(7,17,12,0) 66%);
   }
   .glow--violet {
-    width: 780px; height: 780px; left: -300px; bottom: -330px;
-    background: radial-gradient(circle at 50% 50%, rgba(139,110,255,.2), rgba(8,17,13,0) 68%);
+    width: 760px; height: 760px; left: -320px; bottom: -360px;
+    background: radial-gradient(circle at 50% 50%, rgba(139,110,255,.17), rgba(7,17,12,0) 68%);
   }
   .glow--peach {
-    width: 520px; height: 520px; left: 300px; top: -340px;
-    background: radial-gradient(circle at 50% 50%, rgba(255,163,94,.14), rgba(8,17,13,0) 68%);
+    width: 560px; height: 560px; left: 340px; top: -380px;
+    background: radial-gradient(circle at 50% 50%, rgba(255,163,94,.11), rgba(7,17,12,0) 68%);
   }
-  .panel {
-    position: absolute; right: -170px; bottom: -300px; width: 1320px;
-    transform: rotate(-5.5deg);
-    opacity: .36;
-    filter: blur(.6px) saturate(.85);
-    mask-image: linear-gradient(to top, transparent 2%, #000 34%, #000 72%, transparent 99%);
-    border-radius: 30px;
-    overflow: hidden;
-    border: 1px solid rgba(255,255,255,.16);
-  }
-  .panel img { display: block; width: 100%; }
-  .content { position: absolute; left: 86px; top: 104px; width: 760px; }
+
+  .content { position: absolute; left: 80px; top: 92px; width: 610px; }
   .badge {
     display: inline-flex; align-items: center; gap: 9px;
-    padding: 8px 14px; border-radius: 999px;
+    padding: 8px 15px; border-radius: 999px;
     border: 1px solid rgba(123,227,169,.3);
     background: rgba(53,185,120,.1);
-    color: #91e9b8; font-size: 12px; font-weight: 700; letter-spacing: .16em;
+    color: #91e9b8; font-size: 12px; font-weight: 700; letter-spacing: .15em;
   }
   .badge i { width: 6px; height: 6px; border-radius: 50%; background: #63e39a; box-shadow: 0 0 12px #63e39a; }
   h1 {
     margin: 30px 0 0;
-    font-size: 136px; line-height: .86; letter-spacing: -.065em; font-weight: 800;
+    font-size: 128px; line-height: .86; letter-spacing: -.065em; font-weight: 800;
   }
   h1 span {
     display: block; margin-top: 12px;
-    font-size: 70px; line-height: .95; letter-spacing: -.055em;
+    font-size: 66px; line-height: .95; letter-spacing: -.055em;
     color: #71e6a7;
-    text-shadow: 0 0 60px rgba(60,217,126,.24);
+    text-shadow: 0 0 60px rgba(60,217,126,.22);
   }
   .sub {
-    margin: 34px 0 0; width: 620px;
-    font-size: 24px; line-height: 1.38; color: #b9cbbf; font-weight: 450;
+    margin: 32px 0 0; width: 570px;
+    font-size: 23px; line-height: 1.4; color: #b9cbbf; font-weight: 450;
   }
-  .chips { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 30px; width: 620px; }
+  .sub b { color: #e8f6ed; font-weight: 650; }
+  .chips { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 28px; width: 580px; }
   .chips span {
     padding: 9px 14px; border-radius: 999px;
     background: rgba(255,255,255,.055); border: 1px solid rgba(255,255,255,.12);
     color: #dce9e0; font-size: 13px; font-weight: 650;
   }
   .chips span:first-child { background: #d9f8e6; border-color: #d9f8e6; color: #0e3a25; }
-  .stage { position: absolute; right: 48px; top: 86px; width: 690px; height: 690px; }
-  .halo {
-    position: absolute; left: 108px; top: 92px; width: 520px; height: 520px; border-radius: 50%;
-    background: radial-gradient(circle at 50% 48%, rgba(129,246,178,.45), rgba(53,185,120,.16) 52%, rgba(8,17,13,0) 72%);
-    filter: blur(10px);
+
+  .stats { display: flex; gap: 30px; margin-top: 40px; }
+  .stat b {
+    display: block; font-size: 40px; line-height: 1; letter-spacing: -.04em;
+    font-weight: 760; color: #f1f8f3;
   }
-  .orb {
-    position: absolute; border-radius: 50%; display: grid; place-items: center; overflow: hidden;
-    background: #f8f7f2;
-    box-shadow: 0 34px 80px -30px rgba(0,0,0,.85), inset 0 -16px 30px rgba(20,32,25,.08);
-    border: 1px solid rgba(255,255,255,.7);
+  .stat b em { font-style: normal; color: #71e6a7; }
+  .stat span {
+    display: block; margin-top: 8px;
+    font-size: 11px; letter-spacing: .13em; font-weight: 700; color: #7e998a;
+    text-transform: uppercase;
   }
-  .orb img { width: 94%; height: 94%; object-fit: contain; }
-  .orb--main { left: 108px; top: 92px; width: 520px; height: 520px; }
-  .orb--violet { left: 22px; top: 366px; width: 210px; height: 210px; }
-  .orb--violet img { width: 90%; height: 90%; }
-  .orb--blue { right: 18px; top: 426px; width: 186px; height: 186px; }
-  .orb--blue img { width: 90%; height: 90%; }
-  .model {
-    position: absolute; left: 178px; top: 650px; width: 380px; text-align: center;
-    padding: 12px 20px 13px;
-    border-radius: 20px;
-    background: rgba(8,17,13,.72);
-    border: 1px solid rgba(255,255,255,.11);
-    backdrop-filter: blur(14px);
-    color: #dcece2; font-size: 14px; font-weight: 650; letter-spacing: .02em;
+
+  .lineup {
+    position: absolute; left: 742px; top: 62px; width: 800px;
   }
-  .model small { display: block; margin-top: 4px; color: #82a894; font-size: 11px; letter-spacing: .13em; font-weight: 650; }
+  .lineup-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 0 4px 16px;
+  }
+  .lineup-head b {
+    font-size: 12px; letter-spacing: .17em; font-weight: 750; color: #8fb4a0;
+    text-transform: uppercase;
+  }
+  .lineup-head span { font-size: 12px; color: #5f7d6d; font-weight: 650; letter-spacing: .05em; }
+  .cards {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px;
+  }
+  .card {
+    position: relative;
+    height: 186px;
+    border-radius: 26px;
+    background: rgba(255,255,255,.042);
+    border: 1px solid rgba(255,255,255,.085);
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+    padding: 10px 8px 16px;
+    overflow: hidden;
+  }
+  .card::after {
+    content: ""; position: absolute; inset: 0; border-radius: inherit;
+    background: linear-gradient(180deg, rgba(255,255,255,.035), transparent 46%);
+    pointer-events: none;
+  }
+  .card--accent {
+    background: linear-gradient(180deg, rgba(53,185,120,.2), rgba(53,185,120,.055));
+    border-color: rgba(105,231,158,.48);
+    box-shadow: 0 22px 60px -30px rgba(53,185,120,.7), inset 0 1px 0 rgba(190,255,217,.2);
+  }
+  .card-media { flex: 1; width: 100%; display: grid; place-items: center; padding-top: 6px; }
+  .card-media img {
+    width: 122px; height: 122px; object-fit: contain;
+    filter: drop-shadow(0 16px 20px rgba(0,0,0,.42));
+  }
+  .card--accent .card-media img { width: 132px; height: 132px; }
+  .card-title {
+    font-size: 13px; font-weight: 700; color: #eef8f1; letter-spacing: -.01em;
+    white-space: nowrap;
+  }
+  .card-note {
+    display: flex; align-items: center; gap: 5px;
+    margin-top: 4px; font-size: 10px; font-weight: 650; color: #6e8a7a;
+    letter-spacing: .08em; text-transform: uppercase;
+  }
+  .card--accent .card-note { color: #86dda9; }
+  .card-note i { width: 5px; height: 5px; border-radius: 50%; background: #63e39a; box-shadow: 0 0 8px #63e39a; }
+
   .version {
-    position: absolute; right: 86px; top: 54px;
-    color: #8aa295; font-size: 12px; letter-spacing: .14em; font-weight: 700;
+    position: absolute; right: 80px; top: 28px;
+    color: #789184; font-size: 11px; letter-spacing: .14em; font-weight: 700;
   }
   .foot {
-    position: absolute; left: 86px; right: 86px; bottom: 48px;
+    position: absolute; left: 80px; right: 80px; bottom: 42px;
     display: flex; align-items: center; justify-content: space-between;
     color: #91a89a; font-size: 13px; font-weight: 600;
   }
@@ -137,26 +193,26 @@ const cover = `<!doctype html>
   <div class="glow glow--violet"></div>
   <div class="glow glow--peach"></div>
 
-  <div class="panel"><img src="${dataUri(path.join(root, 'shots', 'look', 'teaser-dashboard.png'))}" alt=""></div>
-
   <div class="content">
-    <div class="badge"><i></i>OPEN SOURCE · SELF-HOSTED</div>
+    <div class="badge"><i></i>12 МОДЕЛЕЙ · OPEN SOURCE</div>
     <h1>Alice<span>Control Center</span></h1>
-    <p class="sub">Панель управления рутованной Яндекс Станцией.<br>Свет, звук, Bluetooth и обновления — локально.</p>
+    <p class="sub">Одна панель для <b>всей линейки Яндекс Станций</b>.<br>Свет, звук, Bluetooth и обновления — локально.</p>
     <div class="chips">
-      <span>SSH</span><span>LED</span><span>Sound</span><span>Bluetooth</span><span>OpenAI-compatible</span>
+      <span>Все станции</span><span>SSH</span><span>LED</span><span>Bluetooth</span><span>OpenAI</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><b>12</b><span>моделей</span></div>
+      <div class="stat"><b><em>14</em></b><span>модулей</span></div>
+      <div class="stat"><b>0</b><span>облака</span></div>
     </div>
   </div>
 
-  <div class="stage">
-    <div class="halo"></div>
-    <div class="orb orb--violet"><img src="${dataUri(path.join(root, 'public', 'devices', 'lite2-violet.webp'))}" alt=""></div>
-    <div class="orb orb--blue"><img src="${dataUri(path.join(root, 'public', 'devices', 'lite2-blue-clock.webp'))}" alt=""></div>
-    <div class="orb orb--main"><img src="${dataUri(path.join(root, 'public', 'devices', 'lite2-green.webp'))}" alt=""></div>
-    <div class="model">Станция Лайт 2<small>ЗЕЛЁНАЯ · БЕЗ ЧАСОВ</small></div>
+  <div class="lineup">
+    <div class="lineup-head"><b>Вся линейка с Алисой</b><span>автоопределение модели</span></div>
+    <div class="cards">${cards}</div>
   </div>
 
-  <div class="version">v0.2.1 · MIT</div>
+  <div class="version">v0.2.2 · MIT</div>
 
   <div class="foot">
     <div class="foot-group">
@@ -219,7 +275,7 @@ await send('Emulation.setDeviceMetricsOverride', {
 await send('Page.navigate', { url: pathToFileURL(htmlPath).href });
 await sleep(1800);
 await evaluate('document.fonts.ready.then(() => document.images.length)');
-await sleep(500);
+await sleep(600);
 const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
 const buffer = Buffer.from(shot.data, 'base64');
 const output = path.join(root, 'docs', 'cover.png');

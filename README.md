@@ -2,7 +2,8 @@
 
 ![Alice Control Center](docs/cover.png)
 
-Локальная панель управления рутованной Яндекс Станцией с компьютера или телефона.
+Локальная панель управления рутованной Яндекс Станцией с компьютера или телефона — для всей
+линейки станций с Алисой, от первой Лайт до Дуо Макс.
 Vue 3 + TypeScript на фронтенде, Node.js + Express на backend, связь со станцией — по SSH.
 Браузер никогда не подключается к станции напрямую, не видит root-пароль и не хранит его.
 
@@ -36,6 +37,24 @@ Vue 3 + TypeScript на фронтенде, Node.js + Express на backend, св
 - **Оформление** — Material You 3 Expressive, светлая/тёмная/системная тема, динамические акценты под цвет корпуса Алисы.
 - **Приветствие** — пошаговое знакомство, контакт автора в Telegram.
 
+## Поддерживаемые станции
+
+Панель рассчитана на всю линейку Яндекс Станций с Алисой. Модель определяется автоматически по
+hostname/model при подключении: для неё показывается официальное изображение и подбирается акцентный
+цвет интерфейса.
+
+| Семейство | Модели |
+| --- | --- |
+| Лайт | Лайт, Лайт 2 |
+| Мини | Мини, Мини 3, Мини 3 Про, Мини с часами |
+| Макс | Макс |
+| Станция | Станция 2, Станция 3, Дуо Макс, Миди, Стрит |
+
+Все 12 моделей поддерживаются в интерфейсе и используют общий SSH-адаптер. Полный набор функций
+проверен на Станции Лайт 2 (`Yandex Prune EVT2`); на остальных доступность LED, Bluetooth,
+системных звуков и отдельных путей зависит от прошивки. Если модель не распознана, показывается
+общий образ станции — подключение и диагностика продолжают работать.
+
 ## Архитектура
 
 ```
@@ -58,20 +77,20 @@ Backend по умолчанию слушает только `127.0.0.1`. Дос�
 
 ### Готовый архив
 
-1. Скачайте `Alice-Control-Center-0.2.1.zip` и `Alice-Control-Center-0.2.1.zip.sha256`
+1. Скачайте `Alice-Control-Center-0.2.2.zip` и `Alice-Control-Center-0.2.2.zip.sha256`
    со страницы [Releases](https://github.com/chrometechhype/alice-control-center/releases/latest).
 2. Сверьте контрольную сумму:
 
    Windows:
 
    ```bat
-   certutil -hashfile Alice-Control-Center-0.2.1.zip SHA256
+   certutil -hashfile Alice-Control-Center-0.2.2.zip SHA256
    ```
 
    macOS/Linux:
 
    ```bash
-   sha256sum -c Alice-Control-Center-0.2.1.zip.sha256
+   sha256sum -c Alice-Control-Center-0.2.2.zip.sha256
    ```
 
 3. Распакуйте архив в любую папку и запустите:
@@ -201,12 +220,11 @@ LAN-доступ всегда защищён токеном. Выключайт�
 | Плагины и YAM | просмотр состояния | установка не автоматизируется |
 | Обновления | GitHub Releases + SHA-256 + откат | архив должен содержать `package.json` и `scripts/apply-update.mjs` |
 
-## Поддерживается
+## Совместимость
 
-- Яндекс Станция Лайт 2 (проверено на `Yandex Prune EVT2`, прошивка `0.372.1.13`, kernel `4.9.113`,
-  BusyBox 1.31.1).
-- Модели, определяемые по hostname/model: Лайт, Лайт 2, Мини, Мини 3, Мини 3 Про, Мини с часами,
-  Макс, Станция 2, Станция 3, Дуо Макс, Миди, Стрит.
+- Полный набор функций проверен на Яндекс Станции Лайт 2 (`Yandex Prune EVT2`, прошивка
+  `0.372.1.13`, kernel `4.9.113`, BusyBox 1.31.1).
+- Остальные модели линейки определяются автоматически и работают через тот же SSH-адаптер.
 - SSH без SFTP (shell fallback), BusyBox `sh`, `usleep`, `awk`, `sha256sum`.
 - Светлая, тёмная и системная темы; динамические акценты по цвету корпуса.
 
@@ -299,10 +317,10 @@ git push --follow-tags
 ```bash
 npm run build
 npm run package
-gh release create v0.2.1 release/Alice-Control-Center-0.2.1.zip \
-  release/Alice-Control-Center-0.2.1.zip.sha256 \
-  --title "Alice Control Center 0.2.1" \
-  --notes-file docs/release-notes/0.2.1.md
+gh release create v0.2.2 release/Alice-Control-Center-0.2.2.zip \
+  release/Alice-Control-Center-0.2.2.zip.sha256 \
+  --title "Alice Control Center 0.2.2" \
+  --notes-file docs/release-notes/0.2.2.md
 ```
 
 Список изменений — [CHANGELOG.md](CHANGELOG.md).
