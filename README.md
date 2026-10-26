@@ -58,20 +58,20 @@ Backend по умолчанию слушает только `127.0.0.1`. Дос�
 
 ### Готовый архив
 
-1. Скачайте `Alice-Control-Center-0.2.0.zip` и `Alice-Control-Center-0.2.0.zip.sha256`
+1. Скачайте `Alice-Control-Center-0.2.1.zip` и `Alice-Control-Center-0.2.1.zip.sha256`
    со страницы [Releases](https://github.com/chrometechhype/alice-control-center/releases/latest).
 2. Сверьте контрольную сумму:
 
    Windows:
 
    ```bat
-   certutil -hashfile Alice-Control-Center-0.2.0.zip SHA256
+   certutil -hashfile Alice-Control-Center-0.2.1.zip SHA256
    ```
 
    macOS/Linux:
 
    ```bash
-   sha256sum -c Alice-Control-Center-0.2.0.zip.sha256
+   sha256sum -c Alice-Control-Center-0.2.1.zip.sha256
    ```
 
 3. Распакуйте архив в любую папку и запустите:
@@ -299,10 +299,10 @@ git push --follow-tags
 ```bash
 npm run build
 npm run package
-gh release create v0.2.0 release/Alice-Control-Center-0.2.0.zip \
-  release/Alice-Control-Center-0.2.0.zip.sha256 \
-  --title "Alice Control Center 0.2.0" \
-  --notes-file docs/release-notes/0.2.0.md
+gh release create v0.2.1 release/Alice-Control-Center-0.2.1.zip \
+  release/Alice-Control-Center-0.2.1.zip.sha256 \
+  --title "Alice Control Center 0.2.1" \
+  --notes-file docs/release-notes/0.2.1.md
 ```
 
 Список изменений — [CHANGELOG.md](CHANGELOG.md).

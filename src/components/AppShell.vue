@@ -45,6 +45,7 @@ import {
   toggleTheme,
 } from '@/lib/store';
 import { errorMessage } from '@/lib/api';
+import { version as appVersion } from '../../package.json';
 
 interface NavItem {
   to: string;
@@ -204,7 +205,7 @@ async function refresh(): Promise<void> {
         </div>
         <div class="sidebar-social">
           <SocialLinks compact />
-          <span class="eyebrow">ACC 0.2</span>
+          <span class="eyebrow">ACC {{ appVersion }}</span>
         </div>
       </div>
     </aside>

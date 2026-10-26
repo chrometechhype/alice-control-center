@@ -156,7 +156,7 @@ const cover = `<!doctype html>
     <div class="model">Станция Лайт 2<small>ЗЕЛЁНАЯ · БЕЗ ЧАСОВ</small></div>
   </div>
 
-  <div class="version">v0.2.0 · MIT</div>
+  <div class="version">v0.2.1 · MIT</div>
 
   <div class="foot">
     <div class="foot-group">
