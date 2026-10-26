@@ -1,6 +1,6 @@
 # Alice Control Center
 
-![Alice Control Center](docs/cover.png)
+![Alice Control Center](docs/cover.png?v=0.2.2)
 
 Локальная панель управления рутованной Яндекс Станцией с компьютера или телефона — для всей
 линейки станций с Алисой, от первой Лайт до Дуо Макс.
