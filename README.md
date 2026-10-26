@@ -1,6 +1,6 @@
 # Alice Control Center
 
-![Alice Control Center](docs/teaser.png)
+![Alice Control Center](docs/cover.png)
 
 Локальная панель управления рутованной Яндекс Станцией с компьютера или телефона.
 Vue 3 + TypeScript на фронтенде, Node.js + Express на backend, связь со станцией — по SSH.
