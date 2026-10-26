@@ -1,0 +1,14 @@
+node_modules/
+dist/
+data/
+release/
+shots/
+.qoder/
+*.log
+*.tsbuildinfo
+*.zip
+*.sha256
+.env
+.env.*
+.DS_Store
+Thumbs.db

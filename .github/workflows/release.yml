@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Run tests
+        run: npm test
+
+      - name: Package release
+        run: npm run package
+
+      - name: Verify checksum
+        run: cd release && sha256sum -c ./*.zip.sha256
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          NOTES="docs/release-notes/${TAG#v}.md"
+          if [ ! -f "$NOTES" ]; then
+            NOTES="CHANGELOG.md"
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/*.zip release/*.zip.sha256 --clobber
+            gh release edit "$TAG" --notes-file "$NOTES"
+          else
+            gh release create "$TAG" release/*.zip release/*.zip.sha256 \
+              --title "Alice Control Center ${TAG#v}" \
+              --notes-file "$NOTES" \
+              --verify-tag
+          fi

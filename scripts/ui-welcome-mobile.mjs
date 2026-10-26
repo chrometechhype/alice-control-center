@@ -1,0 +1,28 @@
+import fs from 'node:fs';
+import WebSocket from 'ws';
+const BROWSER='http://127.0.0.1:9222', BASE='http://localhost:5173', OUT='shots/look';
+const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
+const pages=await (await fetch(`${BROWSER}/json/list`)).json();
+const page=pages.find(i=>i.type==='page');
+const ws=new WebSocket(page.webSocketDebuggerUrl);
+await new Promise((res,rej)=>{ws.once('open',res);ws.once('error',rej);});
+let id=0;const pending=new Map();
+ws.on('message',raw=>{const m=JSON.parse(raw.toString());if(m.id&&pending.has(m.id)){const p=pending.get(m.id);pending.delete(m.id);m.error?p.reject(new Error(m.error.message)):p.resolve(m.result);}});
+const send=(method,params={})=>new Promise((resolve,reject)=>{const mid=++id;pending.set(mid,{resolve,reject});ws.send(JSON.stringify({id:mid,method,params}));setTimeout(()=>{if(pending.has(mid)){pending.delete(mid);reject(new Error('timeout '+method));}},30000);});
+const evaluate=async(expression)=>{const r=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});return r.result.value;};
+const shot=async(name)=>{const p=await send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(`${OUT}/${name}.png`,Buffer.from(p.data,'base64'));};
+await send('Page.enable');await send('Runtime.enable');
+await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:2,mobile:true});
+await send('Page.navigate',{url:`${BASE}/?m=${Date.now()}`});await sleep(1200);
+await evaluate(`localStorage.removeItem('acc-welcome-v2'); true`);
+await send('Page.reload');await sleep(3200);
+const probe=await evaluate(`(() => {
+  const m=document.querySelector('.modal');
+  return { open:Boolean(m), h:m?.clientHeight, sh:m?.scrollHeight, overflow:getComputedStyle(m).overflow, docOverflow:document.documentElement.scrollWidth>document.documentElement.clientWidth };
+})()`);
+console.log('mobile step1', JSON.stringify(probe));await shot('welcome-mobile-step1');
+await evaluate(`(() => { [...document.querySelectorAll('.modal-foot .btn')].find(b=>b.textContent.includes('Далее'))?.click(); return true; })()`);
+await sleep(600);await shot('welcome-mobile-step2');
+const p2=await evaluate(`(() => { const m=document.querySelector('.modal'); return { h:m?.clientHeight, sh:m?.scrollHeight, footerVisible: Boolean(m?.querySelector('.modal-foot')?.getBoundingClientRect().bottom<=window.innerHeight+1) }; })()`);
+console.log('mobile step2', JSON.stringify(p2));
+ws.close();

@@ -1,0 +1,133 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { connectionManager } from '../connection.ts';
+import { loadConnection } from '../config.ts';
+import { AccError } from '../errors.ts';
+import { asyncRoute, sendOk } from '../http.ts';
+import { checkHostTools } from '../hostTools.ts';
+
+const connectionInput = z.object({
+  host: z.string().trim().min(1).max(255),
+  port: z.number().int().min(1).max(65535).default(2222),
+  username: z.string().trim().min(1).max(64).default('root'),
+  password: z.string().max(512).optional(),
+  privateKeyPath: z.string().trim().max(1024).optional(),
+  autoReconnect: z.boolean().default(true),
+});
+
+type ConnectionInput = z.infer<typeof connectionInput>;
+
+function buildConfig(input: ConnectionInput) {
+  const existing = loadConnection();
+  const sameTarget =
+    existing &&
+    existing.host === input.host &&
+    existing.port === input.port &&
+    existing.username === input.username;
+  const password = input.password !== undefined ? input.password : sameTarget ? existing.password : undefined;
+  const privateKeyPath =
+    input.privateKeyPath !== undefined
+      ? input.privateKeyPath || undefined
+      : sameTarget
+        ? existing.privateKeyPath
+        : undefined;
+
+  if (password === undefined && !privateKeyPath) {
+    throw new AccError(
+      'CREDENTIALS_REQUIRED',
+      'Укажите пароль или путь к приватному SSH-ключу',
+      400,
+    );
+  }
+
+  return {
+    transport: 'ssh' as const,
+    host: input.host,
+    port: input.port,
+    username: input.username,
+    password,
+    privateKeyPath,
+    autoReconnect: input.autoReconnect,
+  };
+}
+
+export const connectionRouter = Router();
+
+connectionRouter.get(
+  '/status',
+  asyncRoute(async (_req, res) => {
+    sendOk(res, {
+      status: connectionManager.getStatus(),
+      config: connectionManager.getPublicConfig(),
+      info: connectionManager.getInfo(),
+      capabilities: connectionManager.getCapabilities(),
+      warnings: connectionManager.getWarnings(),
+    });
+  }),
+);
+
+connectionRouter.get(
+  '/tools',
+  asyncRoute(async (_req, res) => {
+    sendOk(res, await checkHostTools());
+  }),
+);
+
+connectionRouter.get(
+  '/snapshot',
+  asyncRoute(async (_req, res) => {
+    sendOk(res, connectionManager.snapshot());
+  }),
+);
+
+connectionRouter.post(
+  '/test',
+  asyncRoute(async (req, res) => {
+    const input = connectionInput.parse(req.body);
+    const config = buildConfig(input);
+    const probe = await connectionManager.testConnection(config);
+    sendOk(res, {
+      info: probe.info,
+      capabilities: probe.capabilities,
+      warnings: probe.warnings,
+    });
+  }),
+);
+
+connectionRouter.post(
+  '/connect',
+  asyncRoute(async (req, res) => {
+    const input = connectionInput.parse(req.body);
+    const config = buildConfig(input);
+    const snapshot = await connectionManager.connect(config, { persist: true, source: 'api' });
+    sendOk(res, snapshot);
+  }),
+);
+
+connectionRouter.post(
+  '/disconnect',
+  asyncRoute(async (_req, res) => {
+    await connectionManager.disconnect();
+    sendOk(res, connectionManager.snapshot());
+  }),
+);
+
+connectionRouter.post(
+  '/reconnect',
+  asyncRoute(async (_req, res) => {
+    const snapshot = await connectionManager.reconnectNow();
+    sendOk(res, snapshot);
+  }),
+);
+
+connectionRouter.post(
+  '/refresh',
+  asyncRoute(async (_req, res) => {
+    const probe = await connectionManager.refreshProbe();
+    sendOk(res, {
+      info: probe.info,
+      capabilities: probe.capabilities,
+      warnings: probe.warnings,
+    });
+  }),
+);

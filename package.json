@@ -1,0 +1,52 @@
+{
+  "name": "alice-control-center",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Alice Control Center — локальная панель управления рутованной Яндекс Станцией",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "tsx watch server/index.ts",
+    "dev:web": "vite",
+    "build": "vue-tsc -b && vite build",
+    "start": "tsx server/index.ts",
+    "test": "vitest run",
+    "package": "node scripts/package-release.mjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@lucide/vue": "^1.61.0",
+    "adm-zip": "^0.6.1",
+    "express": "^5.3.0",
+    "file-type": "^22.2.0",
+    "mime-types": "^3.0.2",
+    "multer": "^2.5.0",
+    "qrcode": "^1.5.4",
+    "ssh2": "^1.17.0",
+    "vue": "^3.5.44",
+    "vue-router": "^5.4.0",
+    "ws": "^8.22.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/mime-types": "^3.0.1",
+    "@types/multer": "^2.3.0",
+    "@types/node": "^26.6.5",
+    "@types/qrcode": "^1.5.6",
+    "@types/ssh2": "^1.15.6",
+    "@types/supertest": "^7.2.1",
+    "@types/ws": "^8.18.2",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "@vue/test-utils": "^2.5.1",
+    "concurrently": "^10.0.6",
+    "jsdom": "^29.1.1",
+    "supertest": "^7.3.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.5",
+    "vitest": "^4.1.12",
+    "vue-tsc": "^3.3.13"
+  }
+}
