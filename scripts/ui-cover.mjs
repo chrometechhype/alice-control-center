@@ -212,7 +212,7 @@ const cover = `<!doctype html>
     <div class="cards">${cards}</div>
   </div>
 
-  <div class="version">v0.3.0 · MIT</div>
+  <div class="version">v0.3.1 · MIT</div>
 
   <div class="foot">
     <div class="foot-group">

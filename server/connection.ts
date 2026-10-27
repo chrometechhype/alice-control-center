@@ -490,7 +490,9 @@ export class ConnectionManager extends EventEmitter {
     // A station that was never reached under this build has no saved MAC, so the only way to keep
     // up with a new DHCP lease is to recognise it on the network. Adopted only when there is a
     // single SSH host to choose from — otherwise the user picks it in the wizard.
-    const hosts = await discoverSshHosts({ timeoutMs: 3_000 }).catch(() => [] as DiscoveredHost[]);
+    // mDNS holds the first 2.5 s of the budget, so anything under 6 s leaves the port sweep no time
+    // for a full /24 and the station stays invisible. This runs only while reconnecting is failing.
+    const hosts = await discoverSshHosts({ timeoutMs: 6_000 }).catch(() => [] as DiscoveredHost[]);
     const addresses = new Set(hosts.map((host) => host.ip));
     if (addresses.size !== 1) return;
     const host = hosts.find((item) => item.ip === [...addresses][0] && (looksLikeYandex(item) || /dropbear/i.test(item.banner)));
