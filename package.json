@@ -1,6 +1,6 @@
 {
   "name": "alice-control-center",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Alice Control Center — локальная панель управления рутованной Яндекс Станцией",
