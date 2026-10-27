@@ -2,31 +2,16 @@ import fs from 'node:fs';
 import { Router } from 'express';
 import { z } from 'zod';
 import type { LedPreset } from '../../shared/types.ts';
-import { connectionManager } from '../connection.ts';
+import { ACTION_READY_WAIT_MS, connectionManager } from '../connection.ts';
 import { ledPresetsFile } from '../config.ts';
 import { AccError } from '../errors.ts';
 import { eventLog } from '../events.ts';
 import { asyncRoute, sendOk } from '../http.ts';
 import { allLedsOff, applyColors, requireZones, zonesFromCapabilities } from '../ledControl.ts';
+import { animationStatus, startAnimation, stopAnimation } from '../ledAnimation.ts';
 import { newId, shQuote } from '../util.ts';
 
 export const ledRouter = Router();
-
-const ANIMATION_SCRIPT = '/tmp/acc-led-anim.sh';
-const ANIMATION_PID = '/tmp/acc-led-anim.pid';
-const ANIMATION_STOP = '/tmp/acc-led-anim.stop';
-
-let animationTimer: NodeJS.Timeout | null = null;
-let animationToken = 0;
-let animationState: {
-  running: boolean;
-  fps?: number;
-  frames?: number;
-  repeat?: number;
-  loop?: boolean;
-  durationMs?: number;
-  startedAt?: number;
-} = { running: false };
 
 function parseApplyBody(body: unknown): number[][] {
   const schema = z.object({
@@ -41,67 +26,6 @@ function parseApplyBody(body: unknown): number[][] {
   }
   return parsed.data.zones.map((zone) => [...zone]);
 }
-
-function clearAnimationTimer(): void {
-  if (animationTimer) clearTimeout(animationTimer);
-  animationTimer = null;
-}
-
-async function stopAnimation(): Promise<void> {
-  animationToken += 1;
-  clearAnimationTimer();
-  animationState = { running: false };
-  const adapter = connectionManager.getAdapter();
-  if (!adapter?.isConnected()) return;
-  await adapter
-    .exec(
-      `touch ${ANIMATION_STOP}; if [ -f ${ANIMATION_PID} ]; then kill "$(cat ${ANIMATION_PID})" 2>/dev/null; fi; rm -f ${ANIMATION_PID}`,
-      { timeoutMs: 6000, maxBytes: 2000 },
-    )
-    .catch(() => undefined);
-}
-
-function buildAnimationScript(
-  zones: Array<{ red: string; green: string; blue: string }>,
-  frames: number[][][],
-  fps: number,
-  repeat: number,
-): string {
-  const frameUs = Math.max(1000, Math.round(1_000_000 / fps));
-  const lines: string[] = [
-    '#!/bin/sh',
-    `PIDFILE=${ANIMATION_PID}`,
-    `STOPFILE=${ANIMATION_STOP}`,
-    'echo $$ > "$PIDFILE"',
-    'rm -f "$STOPFILE"',
-    "trap 'rm -f \"$PIDFILE\"' EXIT",
-  ];
-  for (const zone of zones) {
-    for (const device of [zone.red, zone.green, zone.blue]) {
-      lines.push(`printf 'none\\n' > /sys/class/leds/${device}/trigger 2>/dev/null`);
-    }
-  }
-  lines.push('play() {');
-  frames.forEach((frame) => {
-    lines.push('  [ -f "$STOPFILE" ] && return 1');
-    zones.forEach((zone, zoneIndex) => {
-      const color = frame[zoneIndex % frame.length] ?? [0, 0, 0];
-      lines.push(`  printf '%s\\n' ${color[0]} > /sys/class/leds/${zone.red}/brightness`);
-      lines.push(`  printf '%s\\n' ${color[1]} > /sys/class/leds/${zone.green}/brightness`);
-      lines.push(`  printf '%s\\n' ${color[2]} > /sys/class/leds/${zone.blue}/brightness`);
-    });
-    lines.push(`  usleep ${frameUs}`);
-  });
-  lines.push('  return 0', '}');
-  if (repeat > 0) {
-    lines.push(`i=0`, `while [ "$i" -lt ${repeat} ]; do`, '  play || break', '  i=$((i+1))', 'done');
-  } else {
-    lines.push('while :; do', '  play || break', 'done');
-  }
-  lines.push('rm -f "$PIDFILE"');
-  return `${lines.join('\n')}\n`;
-}
-
 
 function loadPresets(): LedPreset[] {
   try {
@@ -120,14 +44,15 @@ ledRouter.get(
   '/status',
   asyncRoute(async (_req, res) => {
     const zones = zonesFromCapabilities();
-    const adapter = connectionManager.requireAdapter();
     const script = [
       'for l in /sys/class/leds/*; do',
       '  n=${l##*/}',
       '  echo "$n|$(cat $l/trigger 2>/dev/null)|$(cat $l/brightness 2>/dev/null)"',
       'done',
     ].join('\n');
-    const result = await adapter.exec(script, { timeoutMs: 8000, maxBytes: 60_000 });
+    const result = await connectionManager.stationRead((adapter) =>
+      adapter.exec(script, { timeoutMs: 8000, maxBytes: 60_000 }),
+    );
     const leds: Record<string, { trigger: string; value: number }> = {};
     for (const line of result.stdout.split('\n')) {
       const parts = line.trim().split('|');
@@ -145,7 +70,7 @@ ledRouter.get(
         blueValue: leds[zone.blue]?.value ?? null,
         trigger: leds[zone.red]?.trigger ?? null,
       })),
-      animation: animationState,
+      animation: animationStatus(),
       presets: loadPresets(),
     });
   }),
@@ -174,8 +99,8 @@ ledRouter.post(
   '/restore',
   asyncRoute(async (_req, res) => {
     await stopAnimation();
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
     const zones = requireZones();
-    const adapter = connectionManager.requireAdapter();
     const lines: string[] = [];
     for (const zone of zones) {
       for (const device of [zone.red, zone.green, zone.blue]) {
@@ -230,59 +155,18 @@ ledRouter.post(
     }
     const { frames, fps, loop } = parsed.data;
     const repeat = loop ? 0 : parsed.data.repeat;
-    const zones = requireZones();
-    const adapter = connectionManager.requireAdapter();
-    const frameMs = Math.round(1000 / fps);
-    const total = frames.length * (loop ? 1 : repeat);
-    const durationMs = total * frameMs;
-
-    await stopAnimation();
-    const token = ++animationToken;
-    const script = buildAnimationScript(zones, frames, fps, repeat);
-    await adapter.writeFile(ANIMATION_SCRIPT, Buffer.from(script, 'utf8'), 0o755);
-    const launch = await adapter.exec(
-      `rm -f ${ANIMATION_STOP}; nohup sh ${ANIMATION_SCRIPT} </dev/null >/tmp/acc-led-anim.log 2>&1 &`,
-      { timeoutMs: 8000, maxBytes: 4000 },
-    );
-    if (launch.code !== 0) {
-      throw new AccError(
-        'LED_ANIMATION_FAILED',
-        launch.stderr.trim() || 'Не удалось запустить анимацию на устройстве',
-        502,
-      );
-    }
-    animationState = {
-      running: true,
-      fps,
-      frames: frames.length,
-      repeat: loop ? undefined : repeat,
-      loop,
-      durationMs: loop ? undefined : durationMs,
-      startedAt: Date.now(),
-    };
-    if (!loop) {
-      animationTimer = setTimeout(() => {
-        animationTimer = null;
-        if (token === animationToken) animationState = { running: false };
-      }, durationMs + 1500);
-    }
-    eventLog.append({
-      level: 'info',
-      module: 'led',
-      operation: 'animation',
-      result: 'ok',
-      message: loop
-        ? `Анимация LED запущена без ограничения времени: ${frames.length} кадров, ${fps} fps`
-        : `Анимация LED запущена на устройстве: ${frames.length} кадров, ${fps} fps`,
-      details: { fps, frames: frames.length, repeat, loop, durationMs: loop ? 0 : durationMs },
-    });
+    const state = await startAnimation({ frames, fps, repeat, loop });
+    const seconds = state.durationMs ? state.durationMs / 1000 : 0;
     sendOk(res, {
       started: true,
       frames: frames.length,
       fps,
       repeat,
       loop,
-      durationMs: loop ? 0 : durationMs,
+      durationMs: state.durationMs ?? 0,
+      message: loop
+        ? 'Анимация крутится, пока не нажмёте «Стоп»'
+        : `Проигрываем ${repeat}× за ${seconds.toFixed(1)} с`,
     });
   }),
 );

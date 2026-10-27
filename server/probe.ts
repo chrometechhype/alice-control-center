@@ -21,6 +21,7 @@ import {
   parseYamStatus,
 } from './parse.ts';
 import { scanSounds } from './sounds.ts';
+import { parseVolumeCapability } from './volumeScale.ts';
 
 const PROBE_SCRIPT = `
 echo @@UNAME
@@ -29,6 +30,8 @@ echo @@MODEL
 cat /proc/device-tree/model 2>/dev/null; echo
 echo @@QUASAR
 cat /system/vendor/quasar/VERSION 2>/dev/null; echo
+echo @@VOLUME
+sed -n '/"volume_capability" : {/,/^   },$/p' /system/vendor/quasar/quasar.cfg 2>/dev/null
 echo @@QVERSION
 q version 2>/dev/null | grep -E 'Quasar Software Version|Software Revision|Device ID' | head -5
 echo @@DEVID
@@ -145,6 +148,7 @@ export async function runProbe(adapter: StationAdapter): Promise<ProbeResult> {
     ip,
     wifiRssi,
     deviceId,
+    volumeScale: parseVolumeCapability(sections.VOLUME ?? ''),
     collectedAt: Date.now(),
   };
 

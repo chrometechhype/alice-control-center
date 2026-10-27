@@ -1,8 +1,11 @@
 import path from 'node:path';
+import type { AiConfig } from '../shared/types.ts';
 import type { StationAdapter } from './adapters/StationAdapter.ts';
 import { AccError } from './errors.ts';
+import { eventLog } from './events.ts';
 import { loadAiConfig } from './config.ts';
 import { aiEndpoint } from './ai.ts';
+import { synthesizeLocally } from './localVoice.ts';
 import { isStationWav, MAX_SOURCE_BYTES, toStationWav } from './audioConvert.ts';
 
 /**
@@ -168,23 +171,53 @@ export interface SpeechResult {
   ext: string;
   model: string;
   voice: string;
+  /** Where the sound actually came from: the AI server or the computer's own voice. */
+  engine: 'ai' | 'local';
 }
 
 /**
- * Text-to-speech through the OpenAI-compatible server the user already configured. The endpoint
- * is a sibling of /chat/completions, so we derive it from the same base URL.
+ * Text-to-speech. The OpenAI-compatible server the user configured is tried first; when it has no
+ * `/audio/speech` — every free reasoning model on OpenRouter, including the one in use — the panel
+ * falls back to the voice Windows already has and says so in the journal. Alice herself cannot be
+ * told what to say: her voice is synthesised in Yandex's cloud, not on this station.
  */
 export async function synthesizeSpeech(text: string): Promise<SpeechResult> {
   const clean = text.trim().slice(0, MAX_TEXT_LENGTH);
   if (!clean) throw new AccError('EMPTY_TEXT', 'Введите текст, который нужно произнести', 400);
   const config = loadAiConfig();
-  if (!config.baseUrl.trim() || !config.model.trim()) {
+  let providerProblem = '';
+  if (config.baseUrl.trim() && config.model.trim()) {
+    try {
+      return await synthesizeWithProvider(clean, config);
+    } catch (caught) {
+      if (!(caught instanceof AccError)) throw caught;
+      providerProblem = caught.message;
+    }
+  } else {
+    providerProblem = 'Сервер ИИ не настроен.';
+  }
+  try {
+    const local = await synthesizeLocally(clean);
+    eventLog.append({
+      level: 'info',
+      module: 'audio',
+      operation: 'say',
+      result: 'ok',
+      message: `Озвучка системным голосом «${local.voice}»: ${providerProblem}`,
+      details: { engine: 'local', voice: local.voice },
+    });
+    return { audio: local.audio, ext: 'wav', model: 'system', voice: local.voice, engine: 'local' };
+  } catch (caught) {
+    const localProblem = caught instanceof AccError ? caught.message : 'Системная озвучка не сработала.';
     throw new AccError(
-      'AI_NOT_CONFIGURED',
-      'ИИ не настроен. Откройте «Настройки» → «ИИ-генератор» и выберите провайдера.',
-      409,
+      'TTS_UNSUPPORTED',
+      `${providerProblem} Системой тоже не получилось: ${localProblem}`,
+      502,
     );
   }
+}
+
+async function synthesizeWithProvider(clean: string, config: AiConfig): Promise<SpeechResult> {
   const chat = aiEndpoint(config.baseUrl);
   const speechUrl = chat.replace(/\/chat\/completions$/, '/audio/speech');
   const controller = new AbortController();
@@ -218,7 +251,7 @@ export async function synthesizeSpeech(text: string): Promise<SpeechResult> {
   if (!response.ok) {
     throw new AccError(
       'TTS_UNSUPPORTED',
-      `Сервер ИИ не поддерживает озвучку текста (ответ ${response.status}). Нужен провайдер с /audio/speech: OpenAI, Groq, ElevenLabs или свой.`,
+      `Сервер ИИ не озвучивает текст (ответ ${response.status}): у него нет /audio/speech.`,
       502,
     );
   }
@@ -228,5 +261,11 @@ export async function synthesizeSpeech(text: string): Promise<SpeechResult> {
   }
   const type = response.headers.get('content-type') ?? '';
   const ext = type.includes('wav') ? 'wav' : type.includes('ogg') || type.includes('opus') ? 'ogg' : 'mp3';
-  return { audio, ext, model: config.ttsModel?.trim() || 'tts-1', voice: config.ttsVoice?.trim() || 'alloy' };
+  return {
+    audio,
+    ext,
+    model: config.ttsModel?.trim() || 'tts-1',
+    voice: config.ttsVoice?.trim() || 'alloy',
+    engine: 'ai',
+  };
 }

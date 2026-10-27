@@ -1,5 +1,6 @@
 import type { LedZone } from '../shared/types.ts';
-import { connectionManager } from './connection.ts';
+import { ACTION_READY_WAIT_MS, connectionManager } from './connection.ts';
+import type { StationAdapter } from './adapters/StationAdapter.ts';
 import { AccError } from './errors.ts';
 import { shQuote } from './util.ts';
 
@@ -17,9 +18,18 @@ export function requireZones(): LedZone[] {
   return zones;
 }
 
+/**
+ * Zones are only known after a probe, so a column that merely dropped its socket would otherwise
+ * answer «эта модель не умеет кольцо» — a claim about the hardware, when the truth is that the
+ * panel cannot reach it. Readiness comes first, and a deliberate press waits for the ladder.
+ */
+async function readyZones(): Promise<{ adapter: StationAdapter; zones: LedZone[] }> {
+  const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
+  return { adapter, zones: requireZones() };
+}
+
 export async function applyColors(colors: number[][]): Promise<void> {
-  const zones = requireZones();
-  const adapter = connectionManager.requireAdapter();
+  const { adapter, zones } = await readyZones();
   const triggers: string[] = [];
   const values: string[] = [];
   zones.forEach((zone, index) => {
@@ -45,8 +55,7 @@ export async function applyColors(colors: number[][]): Promise<void> {
 }
 
 export async function allLedsOff(): Promise<void> {
-  const zones = requireZones();
-  const adapter = connectionManager.requireAdapter();
+  const { adapter, zones } = await readyZones();
   const triggers: string[] = [];
   const values: string[] = [];
   for (const zone of zones) {

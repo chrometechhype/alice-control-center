@@ -43,7 +43,21 @@ export interface DeviceInfo {
   ip?: string;
   wifiRssi?: number | null;
   deviceId?: string;
+  /**
+   * quasar's own loudness table, read from quasar.cfg. Without it the panel writes a plain ALSA
+   * percentage, which is a different number from the one Alice says out loud.
+   */
+  volumeScale?: VolumeScale | null;
   collectedAt: number;
+}
+
+export interface VolumeScale {
+  /** Breakpoints of `platformToOutputMap`: a step on quasar's axis and the ALSA register it writes. */
+  points: Array<{ platform: number; output: number }>;
+  /** Highest platform step, which quasar treats as 100 %. */
+  topPlatform: number;
+  /** How many steps Alice counts between 0 and 100 % — 10 on the Lite 2. */
+  levelCount: number;
 }
 
 export interface Capability {
@@ -325,6 +339,8 @@ export interface FileRoot {
   path: string;
   label: string;
   writable: boolean;
+  /** Whether this directory is actually on the station right now — YAM, for example, is optional. */
+  exists: boolean;
 }
 
 export interface LedPreset {
@@ -353,7 +369,11 @@ export interface BluetoothStatus {
 
 /** Live ALSA state, read straight from `amixer sget Master` on the station. */
 export interface AudioState {
+  /** Volume on Alice's own scale — the number she will say out loud. */
   volumePct: number | null;
+  /** Alice counts loudness in steps (0–10 on the Lite 2); null when the station has no table. */
+  levelStep: number | null;
+  /** Raw ALSA register value, kept for the hardware percentage. */
   level: number | null;
   max: number | null;
   muted: boolean | null;
@@ -393,10 +413,33 @@ export interface AutomationCondition {
   value: number;
 }
 
-export interface AutomationAction {
-  type: 'notify' | 'diagnostic' | 'ledPreset';
-  value?: string;
-}
+/** Motions the ring renderer knows. The recipe is expanded into pixels on the panel, never stored. */
+export const SCENE_EFFECTS = [
+  'solid',
+  'gradient',
+  'sweep',
+  'pulse',
+  'breathe',
+  'chase',
+  'sparkle',
+  'ripple',
+] as const;
+
+export type SceneEffect = (typeof SCENE_EFFECTS)[number];
+
+/**
+ * One move in a scenario. Steps run in order, so «замигай красным и скажи ошибка» is a led step
+ * followed by a say step. LED steps keep a recipe instead of pixels: the ring grows with the model.
+ */
+export type ScenarioStep =
+  | { kind: 'say'; text: string }
+  | { kind: 'sound'; path: string }
+  | { kind: 'led'; effect: SceneEffect; colors: string[]; fps: number; seconds: number; intensity?: number; reverse?: boolean }
+  | { kind: 'pause'; seconds: number }
+  | { kind: 'notify'; text: string }
+  | { kind: 'diagnostic' };
+
+export type ScenarioStepKind = ScenarioStep['kind'];
 
 export interface AutomationScenario {
   id: string;
@@ -405,7 +448,7 @@ export interface AutomationScenario {
   trigger: 'device.connect' | 'device.disconnect' | 'metrics' | 'app.start';
   condition?: AutomationCondition;
   cooldownSec: number;
-  action: AutomationAction;
+  steps: ScenarioStep[];
   lastRunAt?: number;
   lastResult?: string;
 }

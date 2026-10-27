@@ -19,6 +19,7 @@ watch(
 );
 
 const pct = computed(() => store.audio.state?.volumePct ?? null);
+const levelStep = computed(() => store.audio.state?.levelStep ?? null);
 const muted = computed(() => store.audio.state?.muted ?? false);
 const muteSupported = computed(() => store.audio.state?.canMute ?? true);
 
@@ -30,9 +31,10 @@ async function commit(): Promise<void> {
     await setVolume(target);
     const applied = pct.value;
     if (applied != null && Math.abs(applied - target) > 2) {
-      pushToast('info', `Станция выставила ${applied}% — у ALSA своя шкала`);
+      pushToast('info', `Станция ответила ${applied}% — проверьте, не двигает ли громкость кто-то ещё`);
     } else {
-      pushToast('ok', `Громкость ${applied ?? target}% — Алиса видит то же значение`);
+      const step = levelStep.value;
+      pushToast('ok', `Громкость ${applied ?? target}%${step != null ? ` — уровень ${step}` : ''}, Алиса видит то же число`);
     }
   } catch (error) {
     pushToast('error', errorMessage(error));
@@ -82,11 +84,18 @@ const icon = computed(() => {
       @input="dragging = true"
       @change="commit"
     />
-    <span class="volume__value mono">{{ pct != null ? `${pct}%` : '—' }}</span>
+    <span class="volume__value mono">
+      {{ pct != null ? `${pct}%` : '—' }}
+      <em v-if="levelStep != null" class="volume__level">уровень {{ levelStep }}</em>
+    </span>
   </div>
   <div v-if="!isConnected" class="field-hint mt-8">Колонка не подключена — громкость недоступна.</div>
   <div v-else-if="store.audio.state?.muted" class="field-hint mt-8">Звук выключен на станции.</div>
   <div v-else-if="!store.audio.state" class="field-hint mt-8">Читаем громкость ALSA…</div>
+  <div v-else-if="levelStep != null" class="field-hint mt-8">
+    Шкала Алисы: {{ pct }}% — это её уровень {{ levelStep }}. Ползунок пишет регистр Master так же,
+    как он, поэтому «уменьши громкость» и панель показывают одно число.
+  </div>
   <div v-else class="field-hint mt-8">
     Ползунок пишет напрямую в ALSA Master — тот же регулятор, который двигает Алиса голосом.
   </div>
@@ -100,8 +109,18 @@ const icon = computed(() => {
 }
 
 .volume__value {
-  min-width: 46px;
-  text-align: right;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 62px;
+  line-height: 1.15;
   font-variant-numeric: tabular-nums;
+}
+
+.volume__level {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--text-soft);
+  white-space: nowrap;
 }
 </style>

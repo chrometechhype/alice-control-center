@@ -26,7 +26,7 @@ import EmptyState from '@/components/EmptyState.vue';
 import Modal from '@/components/Modal.vue';
 import { api, apiUrl, errorMessage, triggerDownload } from '@/lib/api';
 import { formatBytes, formatDateTime, formatRelative } from '@/lib/format';
-import { isConnected, pushToast } from '@/lib/store';
+import { everConnected, isConnected, pushToast } from '@/lib/store';
 
 interface ListResult {
   path: string;
@@ -98,6 +98,9 @@ const filtered = computed(() => {
   return entries.value.filter((entry) => entry.name.toLowerCase().includes(needle));
 });
 
+const visibleRoots = computed(() => roots.value.filter((root) => root.exists));
+const absentRoots = computed(() => roots.value.filter((root) => !root.exists));
+
 function joinPath(...parts: string[]): string {
   return parts.join('/').replace(/\/{2,}/g, '/');
 }
@@ -112,7 +115,8 @@ async function loadRoots(): Promise<void> {
   try {
     const result = await api.get<{ roots: FileRoot[] }>('/files/roots');
     roots.value = result.roots;
-    if (result.roots.length) await list(result.roots[0].path);
+    const first = result.roots.find((root) => root.exists);
+    if (first) await list(first.path);
   } catch (caught) {
     error.value = errorMessage(caught);
   } finally {
@@ -304,8 +308,8 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-if="!isConnected" class="card">
-      <EmptyState title="Устройство не подключено" text="Файловый менеджер читает реальные каталоги колонки.">
+    <div v-if="!everConnected" class="card">
+      <EmptyState title="Колонка не отвечает" text="Панель ещё не связалась с колонкой в этой сессии. Файловый менеджер читает реальные каталоги колонки. Откройте «Мастер подключения» или подождите — панель сама пробует снова.">
         <template #icon><FolderOpen :size="22" /></template>
       </EmptyState>
     </div>
@@ -321,7 +325,7 @@ onMounted(() => {
           <div class="card-title"><HardDrive :size="15" /> Разрешённые каталоги</div>
           <div class="category-list mt-12">
             <button
-              v-for="root in roots"
+              v-for="root in visibleRoots"
               :key="root.path"
               type="button"
               class="category-item"
@@ -340,6 +344,10 @@ onMounted(() => {
           <div class="alert alert--info mt-12" style="font-size: 11px">
             <Info :size="14" />
             <div>Список каталогов задан в backend. Добавить произвольный путь нельзя.</div>
+          </div>
+          <div v-if="absentRoots.length" class="field-hint mt-8">
+            На этой колонке нет: {{ absentRoots.map((root) => root.label.toLowerCase()).join(', ') }}.
+            Такие каталоги скрыты — панель предлагает только то, что реально существует.
           </div>
         </aside>
 
@@ -379,7 +387,13 @@ onMounted(() => {
             </EmptyState>
 
             <div v-else class="table-wrap">
-              <table class="table">
+              <table class="table table--files">
+                <colgroup>
+                  <col />
+                  <col class="col-size" />
+                  <col class="col-date" />
+                  <col class="col-actions" />
+                </colgroup>
                 <thead>
                   <tr>
                     <th>Имя</th>

@@ -15,7 +15,7 @@ import {
 import EmptyState from '@/components/EmptyState.vue';
 import { api, errorMessage } from '@/lib/api';
 import { formatDuration, formatTime } from '@/lib/format';
-import { isConnected, pushToast } from '@/lib/store';
+import { everConnected, isConnected, pushToast } from '@/lib/store';
 
 interface CommandPreset {
   group: string;
@@ -143,8 +143,8 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-if="!isConnected" class="card">
-      <EmptyState title="Устройство не подключено" text="Терминал выполняет команды на реальной колонке.">
+    <div v-if="!everConnected" class="card">
+      <EmptyState title="Колонка не отвечает" text="Панель ещё не связалась с колонкой в этой сессии. Терминал выполняет команды на реальной колонке. Откройте «Мастер подключения» или подождите — панель сама пробует снова.">
         <template #icon><SquareTerminal :size="22" /></template>
       </EmptyState>
     </div>

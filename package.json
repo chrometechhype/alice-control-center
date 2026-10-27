@@ -1,6 +1,6 @@
 {
   "name": "alice-control-center",
-  "version": "0.3.1",
+  "version": "1.0.0-alpha.1",
   "private": true,
   "type": "module",
   "description": "Alice Control Center — локальная панель управления рутованной Яндекс Станцией",
@@ -8,7 +8,8 @@
     "dev": "concurrently -k -n api,web -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx watch server/index.ts",
     "dev:web": "vite",
-    "build": "vue-tsc -b && vite build",
+    "build": "npm run typecheck && vite build",
+    "typecheck": "vue-tsc -b && tsc -p tsconfig.server.json --noEmit",
     "start": "tsx server/index.ts",
     "test": "vitest run",
     "package": "node scripts/package-release.mjs"

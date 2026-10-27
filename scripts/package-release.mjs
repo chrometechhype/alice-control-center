@@ -7,8 +7,8 @@ import AdmZip from 'adm-zip';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const version = pkg.version;
-if (!/^\d+\.\d+\.\d+$/.test(version)) {
-  throw new Error(`package.json: ожидается версия X.Y.Z, получено «${version}»`);
+if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.+-]+)?$/.test(version)) {
+  throw new Error(`package.json: ожидается версия X.Y.Z, возможно с пре-релизом (1.0.0-alpha.1), получено «${version}»`);
 }
 
 const releaseRoot = path.join(root, 'release', 'alice-control-center');

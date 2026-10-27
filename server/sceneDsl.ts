@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SCENE_EFFECTS, type SceneEffect } from '../shared/types.ts';
 import { AccError } from './errors.ts';
 
 /**
@@ -6,18 +7,7 @@ import { AccError } from './errors.ts';
  * max_tokens and the scene dies in validation. So the model only chooses an effect, a palette and
  * a few numbers, and the frames are computed here — deterministically and always loop-closed.
  */
-export const SCENE_EFFECTS = [
-  'solid',
-  'gradient',
-  'sweep',
-  'pulse',
-  'breathe',
-  'chase',
-  'sparkle',
-  'ripple',
-] as const;
-
-export type SceneEffect = (typeof SCENE_EFFECTS)[number];
+export { SCENE_EFFECTS, type SceneEffect };
 
 export const EFFECT_HINTS: Record<SceneEffect, string> = {
   solid: 'all zones one colour, no movement',
@@ -31,13 +21,22 @@ export const EFFECT_HINTS: Record<SceneEffect, string> = {
 };
 
 const RawSceneSchema = z.object({
-  name: z.string().trim().min(1).max(48),
-  fps: z.number().finite().min(1).max(60),
-  effect: z.enum(SCENE_EFFECTS),
-  colors: z.array(z.string().min(4).max(40)).min(1).max(6),
-  frames: z.number().finite().min(2).max(64),
-  intensity: z.number().finite().min(0.1).max(1),
-  reverse: z.boolean(),
+  name: z.string().trim().min(1, 'Название сцены пустое').max(48, 'Название длиннее 48 символов'),
+  fps: z.number({ error: 'fps должен быть числом' }).finite().min(1, 'Минимум 1 fps').max(60, 'Максимум 60 fps'),
+  effect: z.enum(SCENE_EFFECTS, {
+    error: `Движение кольца должно быть одним из: ${SCENE_EFFECTS.join(', ')}`,
+  }),
+  colors: z
+    .array(z.string().min(4, 'Нужен HEX вроде #ff2d2d').max(40, 'Слишком длинный цвет'))
+    .min(1, 'Нужен хотя бы один цвет')
+    .max(6, 'Хватит и шести цветов'),
+  frames: z
+    .number({ error: 'Количество кадров — число' })
+    .finite()
+    .min(2, 'В сцене должно быть минимум 2 кадра')
+    .max(64, 'Больше 64 кадров не нужно'),
+  intensity: z.number({ error: 'Яркость — число' }).finite().min(0.1, 'Яркость меньше 0,1').max(1, 'Яркость больше 1'),
+  reverse: z.boolean({ error: 'Движение в обратную сторону — да или нет' }),
 });
 
 // The keys without a fallback come first: if the answer is cut off by the token budget, the
@@ -54,6 +53,9 @@ export function sceneSystemPrompt(zones: number): string {
     `Allowed "effect" values: ${SCENE_EFFECTS.join(', ')}.`,
     `Meanings: ${SCENE_EFFECTS.map((effect) => `${effect} = ${EFFECT_HINTS[effect]}`).join('; ')}.`,
     'Hard rules:',
+    '- The user description is the brief, not a suggestion: every colour, motion and tempo word in it must be obeyed. "красный" means red in your palette, "мигает" means effect "pulse", "бежит/крутится" means "sweep", "дышит" means "breathe", "искрит/звёзды" means "sparkle", "волны" means "ripple", "плавно/медленно" means fps 6..8, "быстро/резко" means fps 24..40.',
+    '- If the description names a mood instead of a colour (тревога, авария, ошибка -> red; ночь, спокойствие -> deep blue/violet; праздник -> rainbow), choose colours that show that mood.',
+    '- Never invent details the user forbade ("только зелёный" means one colour).',
     '- The example above only shows the shape. Write your own values, never repeat it and never start the object twice.',
     '- "colors" is 1..6 HEX strings like "#7f5af0". No color names, no arrays of numbers.',
     '- "frames" is 8..24 (number of animation steps, not pixels). "fps" is 4..40.',
@@ -71,6 +73,56 @@ export function sceneRepairPrompt(reason: string): string {
     'Ответь ровно одним JSON-объектом по схеме, без пояснений и без кадров пикселей.',
     SCENE_SPEC_EXAMPLE,
   ].join('\n');
+}
+
+/** Words people actually type, mapped to what the ring can do. Checked in order, first hit wins. */
+const INTENT_COLORS: Array<{ word: RegExp; colors: string[] }> = [
+  { word: /радуг|радужн/i, colors: ['#ff2d2d', '#ff8b1f', '#ffd426', '#2cb67d', '#3a5bd9', '#7f5af0'] },
+  { word: /огон|пламен|пожар|магм/i, colors: ['#ff2d2d', '#ff8b1f', '#ffd426'] },
+  { word: /красн|багря|малин/i, colors: ['#ff2d2d'] },
+  { word: /оранж|рыж/i, colors: ['#ff8b1f'] },
+  { word: /жёлт|желт|золот|янтар/i, colors: ['#ffd426'] },
+  { word: /зелен|зелён|изумруд/i, colors: ['#2cb67d'] },
+  { word: /мят|бирюз|голуб|небес|океан|морск/i, colors: ['#4cc9f0'] },
+  { word: /син|лазур|сапфир/i, colors: ['#3a5bd9'] },
+  { word: /фиолет|сирен|пурпур|лило|маджента/i, colors: ['#7f5af0'] },
+  { word: /роз|фукси|магент/i, colors: ['#ff5da2'] },
+  { word: /бел|снеж|молочн/i, colors: ['#f2f2f2'] },
+];
+
+const INTENT_EFFECTS: Array<{ word: RegExp; effect: SceneEffect }> = [
+  { word: /искр|звёзд|звезд|мерца|блеск|микра/i, effect: 'sparkle' },
+  { word: /волн|ряб|накат/i, effect: 'ripple' },
+  { word: /дыша|дыши|дыхан|вдыха|выдыха/i, effect: 'breathe' },
+  { word: /мига|морг|блик|строб|пульс|сигнал|тревог|аварий/i, effect: 'pulse' },
+  { word: /беж|круж|вращ|бегущ|спирал|карусел/i, effect: 'sweep' },
+  { word: /градиент|перелив|перелива/i, effect: 'gradient' },
+  { word: /ровн|статич|моностекло|просто горит/i, effect: 'solid' },
+];
+
+export interface SceneIntent {
+  /** HEX strings in the order the user named them; empty when the description says nothing about colour. */
+  colors: string[];
+  effect: SceneEffect | null;
+  speed: 'fast' | 'slow' | null;
+}
+
+/**
+ * The model is the creative layer, the description is the contract: a free-text request that names
+ * red and says "мигает" must come back red and flashing even when the model answered with violet and
+ * a slow chase. So the words are read here and win over the model wherever they are decisive.
+ */
+export function parseSceneIntent(prompt: string): SceneIntent {
+  const colors: string[] = [];
+  for (const { word, colors: hex } of INTENT_COLORS) {
+    if (!word.test(prompt)) continue;
+    for (const value of hex) if (!colors.includes(value)) colors.push(value);
+  }
+  const effect = INTENT_EFFECTS.find(({ word }) => word.test(prompt))?.effect ?? null;
+  let speed: SceneIntent['speed'] = null;
+  if (/быстр|резк|стремит|срочно|молни|агресс/i.test(prompt)) speed = 'fast';
+  else if (/медленн|плавн|спокойн|расслаб|неспеш/i.test(prompt)) speed = 'slow';
+  return { colors: colors.slice(0, 6), effect, speed };
 }
 
 export interface PreparedScene {
@@ -177,13 +229,15 @@ function legacyFrames(object: Record<string, unknown>): number[][][] | null {
 /**
  * Turns a model answer into real frames. Returns null when the answer is not a scene at all so
  * the caller can retry once with a correction instead of failing on the first hiccup.
+ * `prompt` is the user's own words: it names the scene if the model did not, and it overrules the
+ * model wherever the request is explicit about colour, motion or tempo.
  */
-export function buildScene(raw: string, zones: number, fallbackName: string): PreparedScene | null {
+export function buildScene(raw: string, zones: number, prompt: string): PreparedScene | null {
   const object = extractJsonObject(raw);
   if (!object) return null;
 
   const rawName = typeof object.name === 'string' ? object.name.trim() : '';
-  const name = (rawName || fallbackName).slice(0, 48);
+  const name = (rawName || prompt || 'Сцена ИИ').slice(0, 48);
 
   const legacy = legacyFrames(object);
   if (legacy) {
@@ -206,7 +260,19 @@ export function buildScene(raw: string, zones: number, fallbackName: string): Pr
   if (!parsed.success) {
     throw new AccError('AI_BAD_SCENE', `ИИ прислал сцену не по схеме — ${describeIssue(parsed.error)}`, 502);
   }
-  const spec = parsed.data;
+  const intent = parseSceneIntent(prompt);
+  const spec = {
+    ...parsed.data,
+    name,
+    colors: intent.colors.length ? intent.colors : parsed.data.colors,
+    effect: intent.effect ?? parsed.data.effect,
+    fps:
+      intent.speed === 'fast'
+        ? Math.max(parsed.data.fps, 24)
+        : intent.speed === 'slow'
+          ? Math.min(parsed.data.fps, 8)
+          : parsed.data.fps,
+  };
   const palette = spec.colors.map(parseColor).filter((color): color is Rgb => color !== null);
   if (!palette.length) {
     throw new AccError('AI_BAD_SCENE', 'ИИ прислал цвета в непонятном формате. Нужен HEX вроде "#7f5af0"', 502);

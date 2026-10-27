@@ -1002,7 +1002,8 @@ onMounted(() => {
               Ключ хранится только в <span class="mono">data/config.json</span> на backend и никогда
               не отдаётся во frontend. Подходит любой сервер с endpoint
               <span class="mono">/chat/completions</span>. Озвучка использует
-              <span class="mono">/audio/speech</span> — если его нет, кнопка проверки честно об этом скажет.
+              <span class="mono">/audio/speech</span>; если его нет, панель говорит голосом Windows —
+              чужой текст голосом Алисы произнести нельзя, он синтезируется в облаке Яндекса.
             </p>
 
             <div v-if="aiError" class="alert alert--error">

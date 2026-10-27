@@ -31,14 +31,7 @@ import DevicePortrait from '@/components/DevicePortrait.vue';
 import VolumeControl from '@/components/VolumeControl.vue';
 import { detectDeviceVisual } from '@/lib/deviceVisual';
 import { api, errorMessage } from '@/lib/api';
-import {
-  isConnected,
-  pushToast,
-  reconnectDevice,
-  refreshBackups,
-  refreshProbe,
-  store,
-} from '@/lib/store';
+import { everConnected, isConnected, pushToast, reconnectDevice, refreshBackups, refreshProbe, store } from '@/lib/store';
 import {
   clamp,
   formatBytes,
@@ -192,7 +185,7 @@ onMounted(() => {
         <div v-if="isConnected && info?.modelRaw" class="hero-model">
           <span class="hero-model__raw">{{ info.modelRaw.replace(/\0/g, '').trim() }}</span>
         </div>
-        <p v-if="!isConnected" class="hero-desc">
+        <p v-if="!everConnected" class="hero-desc">
           {{ store.status.lastError || 'Укажите адрес SSH и пароль в мастере подключения. Backend по умолчанию слушает только 127.0.0.1.' }}
         </p>
         <div class="hero-actions">

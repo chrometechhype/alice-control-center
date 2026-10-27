@@ -5,27 +5,39 @@ import { loadScenarios, runScenario, saveScenarios } from '../automation.ts';
 import { AccError } from '../errors.ts';
 import { eventLog } from '../events.ts';
 import { asyncRoute, sendOk } from '../http.ts';
+import { stepSchema } from '../scenarioDsl.ts';
+import { assertPlayableSoundPath } from '../security/paths.ts';
 import { newId, routeParam } from '../util.ts';
 
 export const automationRouter = Router();
 
 const scenarioInput = z.object({
-  name: z.string().trim().min(1).max(80),
+  name: z.string().trim().min(1, 'Укажите название сценария').max(80, 'Название длиннее 80 символов'),
   enabled: z.boolean().default(true),
-  trigger: z.enum(['device.connect', 'device.disconnect', 'metrics', 'app.start']),
+  trigger: z.enum(['device.connect', 'device.disconnect', 'metrics', 'app.start'], {
+    error: 'Неизвестный триггер события',
+  }),
   condition: z
     .object({
-      metric: z.enum(['cpuPct', 'memPct', 'tempC']),
-      op: z.enum(['>', '<']),
-      value: z.number().min(-50).max(200),
+      metric: z.enum(['cpuPct', 'memPct', 'tempC'], { error: 'Метрика должна быть CPU, память или температура' }),
+      op: z.enum(['>', '<'], { error: 'Условие — «больше» или «меньше»' }),
+      value: z.number({ error: 'Порог должен быть числом' }).min(-50, 'Порог меньше -50').max(200, 'Порог больше 200'),
     })
     .optional(),
-  cooldownSec: z.number().int().min(5).max(86_400).default(60),
-  action: z.object({
-    type: z.enum(['notify', 'diagnostic', 'ledPreset']),
-    value: z.string().max(120).optional(),
-  }),
+  cooldownSec: z
+    .number({ error: 'Cooldown — целое число секунд' })
+    .int('Cooldown — целое число секунд')
+    .min(5, 'Cooldown короче 5 секунд не имеет смысла')
+    .max(86_400, 'Cooldown длиннее суток')
+    .default(60),
+  steps: z.array(stepSchema).min(1, 'В сценарии нет шагов').max(8, 'Больше восьми шагов в сценарии не нужно'),
 });
+
+function validateSteps(steps: AutomationScenario['steps']): void {
+  for (const step of steps) {
+    if (step.kind === 'sound') assertPlayableSoundPath(step.path);
+  }
+}
 
 automationRouter.get(
   '/',
@@ -46,13 +58,13 @@ automationRouter.post(
   '/',
   asyncRoute(async (req, res) => {
     const parsed = scenarioInput.safeParse(req.body);
-    if (!parsed.success) throw new AccError('BAD_SCENARIO', 'Некорректный сценарий', 400);
+    if (!parsed.success) {
+      throw new AccError('BAD_SCENARIO', `Сценарий не подходит: ${parsed.error.issues[0]?.message ?? 'проверьте шаги'}`, 400);
+    }
     if (parsed.data.trigger === 'metrics' && !parsed.data.condition) {
       throw new AccError('CONDITION_REQUIRED', 'Для триггера по метрикам нужно условие', 400);
     }
-    if (parsed.data.action.type === 'ledPreset' && !parsed.data.action.value) {
-      throw new AccError('PRESET_REQUIRED', 'Выберите LED-пресет', 400);
-    }
+    validateSteps(parsed.data.steps);
     const scenario: AutomationScenario = {
       id: newId('scn'),
       name: parsed.data.name,
@@ -60,7 +72,7 @@ automationRouter.post(
       trigger: parsed.data.trigger,
       condition: parsed.data.condition,
       cooldownSec: parsed.data.cooldownSec,
-      action: parsed.data.action,
+      steps: parsed.data.steps,
     };
     const scenarios = loadScenarios();
     if (scenarios.length >= 50) {
@@ -84,10 +96,13 @@ automationRouter.put(
   '/:id',
   asyncRoute(async (req, res) => {
     const parsed = scenarioInput.safeParse(req.body);
-    if (!parsed.success) throw new AccError('BAD_SCENARIO', 'Некорректный сценарий', 400);
+    if (!parsed.success) {
+      throw new AccError('BAD_SCENARIO', `Сценарий не подходит: ${parsed.error.issues[0]?.message ?? 'проверьте шаги'}`, 400);
+    }
     const scenarios = loadScenarios();
     const index = scenarios.findIndex((scenario) => scenario.id === routeParam(req.params.id));
     if (index < 0) throw new AccError('SCENARIO_NOT_FOUND', 'Сценарий не найден', 404);
+    validateSteps(parsed.data.steps);
     const previous = scenarios[index];
     scenarios[index] = {
       ...previous,

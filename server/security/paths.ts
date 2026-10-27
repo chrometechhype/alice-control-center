@@ -7,10 +7,11 @@ export const SOUNDS_ROOT = '/system/vendor/quasar/sounds';
 export const USER_SOUNDS_ROOT = '/data/sounds';
 export const LED_PATTERNS_ROOT = '/system/vendor/quasar/ledpatterns';
 export const INTERNAL_TMP_ROOT = '/data/opt/acc-tmp';
-export const YAM_ROOT = '/data/quazar/yam';
+export const YAM_ROOT = '/data/quasar/yam';
 export const LOGS_ROOT = '/data/quasar/daemons_logs';
 
-export const FILE_ROOTS: FileRoot[] = [
+/** The catalog the panel offers. Whether each of these exists on a given station is answered by `/roots`. */
+export const FILE_ROOTS: Array<Omit<FileRoot, 'exists'>> = [
   { path: '/data/opt', label: 'Пользовательские данные', writable: true },
   { path: '/data/sounds', label: 'Звуки пользователя', writable: true },
   { path: SOUNDS_ROOT, label: 'Системные звуки', writable: false },

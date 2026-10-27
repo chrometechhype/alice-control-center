@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bluetoothPairedFilterWorks,
   computeCpuPct,
+  dirTreeCommand,
+  dirWalkCommand,
+  explainBtFailure,
   guessModel,
   parseBluetoothctlShow,
+  parseBtBatch,
   parseDf,
+  parseDirWalk,
   parseSections,
   parseThermal,
   parseWifiRssi,
@@ -102,6 +108,70 @@ describe('parseBluetoothctlShow', () => {
   });
 });
 
+describe('parseBtBatch', () => {
+  it('splits the single bluetoothctl exec back into its four answers', () => {
+    const batch = [
+      'Controller 11:22:33:44:55:66 (public)',
+      '\tName: Алисонька',
+      '\tPowered: yes',
+      '@@ACC_DEVICES@@',
+      'Device AA:BB:CC:11:22:33 Redmi Buds 6 Play',
+      '@@ACC_PAIRED@@',
+      '@@ACC_CONNECTED@@',
+    ].join('\n');
+    const parts = parseBtBatch(batch);
+    expect(parts.show).toContain('Алисонька');
+    expect(parts.known.trim()).toBe('Device AA:BB:CC:11:22:33 Redmi Buds 6 Play');
+    // Listed but not bonded: the pairing the column lost after a reboot looks exactly like this.
+    expect(parts.paired.trim()).toBe('');
+    expect(parts.connected.trim()).toBe('');
+  });
+
+  it('tolerates a truncated answer instead of throwing', () => {
+    expect(parseBtBatch('Controller 00:11:22:33:44:55').paired).toBe('');
+  });
+
+  it('notices an old bluetoothctl that prints its usage instead of the paired list', () => {
+    expect(bluetoothPairedFilterWorks(parseBtBatch('show\n@@ACC_DEVICES@@\nDevice 1\n@@ACC_PAIRED@@\nToo many arguments\n@@ACC_CONNECTED@@\n')))
+      .toBe(false);
+    expect(bluetoothPairedFilterWorks(parseBtBatch('show\n@@ACC_DEVICES@@\n@@ACC_PAIRED@@\n@@ACC_CONNECTED@@\n'))).toBe(true);
+  });
+});
+
+describe('explainBtFailure', () => {
+  it('turns the BlueZ «not available» line into a next action', () => {
+    const explained = explainBtFailure(
+      'Attempt to connect to AA:BB:CC:11:22:33: Failed: Device AA:BB:CC:11:22:33 not available',
+      'AA:BB:CC:11:22:33',
+    );
+    expect(explained).toContain('AA:BB:CC:11:22:33');
+    expect(explained).toContain('Сканировать');
+    expect(explained).not.toMatch(/not available/i);
+  });
+
+  it('says so when the device is already paired', () => {
+    expect(explainBtFailure('Failed to pair: org.bluez.Error.AlreadyExists', 'AA:BB:CC:11:22:33'))
+      .toContain('уже сопряжено');
+  });
+
+  it('keeps an unknown line visible rather than inventing a reason', () => {
+    expect(explainBtFailure('Some weird kernel message', 'AA:BB')).toContain('Some weird kernel message');
+  });
+
+  it('has no English left in the Russian strings', () => {
+    for (const raw of [
+      'not powered',
+      'org.bluez.Error.AuthenticationRejected',
+      'connect timed out',
+      'Device XX no such device',
+      'Not connected',
+      'Operation already in progress',
+    ]) {
+      expect(explainBtFailure(raw, 'AA:BB:CC:11:22:33')).toMatch(/[а-я]/);
+    }
+  });
+});
+
 describe('guessModel', () => {
   it('detects Lite 2 from the device hostname', () => {
     expect(guessModel('Yandex Prune EVT2', 'Yandex-Lite-gen2-TEST')).toBe('Станция Лайт 2');
@@ -113,5 +183,86 @@ describe('guessModel', () => {
 
   it('falls back to the raw model', () => {
     expect(guessModel('Unknown Box', 'host')).toBe('Unknown Box');
+  });
+});
+
+describe('dirWalkCommand', () => {
+  it('guards the directory and walks it with globs instead of ls output', () => {
+    const command = dirWalkCommand("/data/it's");
+    expect(command).toContain("d='/data/it'\\''s';");
+    expect(command).toContain('No such file or directory');
+    expect(command).toContain('for f in "$d"/* "$d"/.[!.]* "$d"/..?*; do');
+    expect(command).toContain('ls -ld --full-time "$f"');
+    expect(command).toContain(`printf '%s\\t%s\\t%s\\n'`);
+  });
+
+  it('drops --full-time for a station whose ls lacks it', () => {
+    expect(dirWalkCommand('/data', false)).toContain('ls -ld "$f"');
+    expect(dirWalkCommand('/data', false)).not.toContain('--full-time');
+  });
+});
+
+describe('parseDirWalk', () => {
+  const line = (kind: string, attrs: string, fullPath: string) => `${kind}\t${attrs}\t${fullPath}`;
+
+  it('keeps the byte-safe name while taking attributes from the mangled ls line', () => {
+    const entries = parseDirWalk(
+      line(
+        'f',
+        '-rw-r--r--    1 root     root           844 2026-10-27 17:48:52 +0000 /data/sounds/????????.wav',
+        '/data/sounds/проверка кириллицы.wav',
+      ),
+    );
+    expect(entries).toHaveLength(1);
+    expect(entries[0].name).toBe('проверка кириллицы.wav');
+    expect(entries[0].path).toBe('/data/sounds/проверка кириллицы.wav');
+    expect(entries[0].size).toBe(844);
+    expect(entries[0].mtimeMs).toBe(Date.parse('2026-10-27T17:48:52+00:00'));
+    expect(entries[0].isFile).toBe(true);
+    expect(entries[0].mode).toBe(0o644);
+  });
+
+  it('reads directories, links and the short date format', () => {
+    const entries = parseDirWalk(
+      [
+        line('d', 'drwxr-xr-x    2 root root 4096 2026-10-27 17:48:52 +0000 /data/???', '/data/мой пак'),
+        line('l', 'lrwxrwxrwx    1 root root   12 2026-10-27 17:48:52 +0000 /data/lnk -> /data/target', '/data/lnk'),
+        line('f', '-rw-r--r--    1 root root 844 Oct 27 17:48 /data/old.wav', '/data/old.wav'),
+      ].join('\n'),
+    );
+    expect(entries.map((entry) => [entry.name, entry.isDirectory, entry.isSymbolicLink])).toEqual([
+      ['мой пак', true, false],
+      ['lnk', false, true],
+      ['old.wav', false, false],
+    ]);
+    expect(entries[2].mtimeMs).toBeGreaterThan(0);
+  });
+
+  it('still reports the name when ls gave nothing usable', () => {
+    const entries = parseDirWalk([line('f', '', '/data/sounds/weird name.wav'), 'junk'].join('\n'));
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual({
+      name: 'weird name.wav',
+      path: '/data/sounds/weird name.wav',
+      size: 0,
+      mtimeMs: 0,
+      mode: 0,
+      isDirectory: false,
+      isFile: true,
+      isSymbolicLink: false,
+    });
+  });
+});
+
+describe('dirTreeCommand', () => {
+  it('keeps every loop variable local so a subdirectory cannot steal the parent depth', () => {
+    const command = dirTreeCommand('/data/sounds');
+    expect(command).toContain('local t=$1 k=$2 f k2 a;');
+    expect(command).toContain('walk "$d" 1');
+    expect(command).toContain('if [ "$k2" = d ] && [ "$k" -lt 4 ]; then walk "$f" $((k + 1)); fi;');
+  });
+
+  it('stops at the requested depth', () => {
+    expect(dirTreeCommand('/data', 2)).toContain('[ "$k" -lt 2 ]');
   });
 });

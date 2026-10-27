@@ -17,16 +17,28 @@ import {
   publicConnection,
   saveConnection,
 } from './config.ts';
-import { AccError } from './errors.ts';
+import { AccError, isTransportDeath } from './errors.ts';
 import { eventLog } from './events.ts';
 import { MetricsService } from './metrics.ts';
 import { runProbe, type ProbeResult } from './probe.ts';
-import { discoverSshHosts, findIpByMac, looksLikeYandex, macOfIp, type DiscoveredHost } from './discovery.ts';
+import {
+  discoverSshHosts,
+  findIpByMac,
+  interfaceForHost,
+  isTcpOpen,
+  looksLikeYandex,
+  macOfIp,
+  type DiscoveredHost,
+} from './discovery.ts';
 import { safeErrorMessage } from './util.ts';
 
 const MAX_FAST_ATTEMPTS = 4;
 const REVIVAL_INTERVAL_MS = 45_000;
 const METRICS_DEATH_STREAK = 3;
+/** A reboot is only declared when the wall clock and `/proc/uptime` disagree by this much… */
+const REBOOT_MIN_GAP_SEC = 300;
+/** …and only for a device that has been up no longer than this, so a laptop clock jump is not a reboot. */
+const REBOOT_FRESH_SEC = 3 * 3600;
 
 /**
  * Deliberate actions — play, publish, delete, move the volume — are worth waiting for. Measured on
@@ -34,6 +46,34 @@ const METRICS_DEATH_STREAK = 3;
  * up exactly while the ladder is one step from a live socket.
  */
 export const ACTION_READY_WAIT_MS = 20_000;
+
+/**
+ * A status read keeps to a shorter budget than an action: the frontend waits 12 s for the volume,
+ * and a panel that is still patiently reconnecting when the browser gave up looks worse than one
+ * that says «не отвечает» on time.
+ */
+const READ_WINDOW_MS = 8_000;
+
+const NOT_ANSWERING_MESSAGE =
+  'Колонка не отвечает. Панель пытается связаться с ней — попробуйте через несколько секунд.';
+
+/**
+ * Which scanned host is our column. A known MAC settles it; otherwise the station is adopted only
+ * when there is exactly one SSH host on the network, or exactly one that looks like Yandex
+ * hardware — never a guess between two unknown devices. mDNS holds the first 2.5 s of a scan, so a
+ * budget under 6 s leaves the sweep no time for a full /24 and the station stays invisible.
+ */
+function pickStation(hosts: DiscoveredHost[], config: DeviceConnectionConfig): DiscoveredHost | undefined {
+  const normalize = (value: string): string => value.toLowerCase().replace(/:/g, '-');
+  if (config.mac) {
+    const wanted = normalize(config.mac);
+    const byMac = hosts.find((host) => host.mac && normalize(host.mac) === wanted);
+    if (byMac) return byMac;
+  }
+  if (new Set(hosts.map((host) => host.ip)).size === 1) return hosts[0];
+  const yandex = hosts.filter((host) => looksLikeYandex(host) || /dropbear/i.test(host.banner));
+  return yandex.length === 1 ? yandex[0] : undefined;
+}
 
 export type { ConnectionSnapshot };
 
@@ -52,6 +92,7 @@ export class ConnectionManager extends EventEmitter {
   private attempts = 0;
   private manualDisconnect = false;
   private metricsErrorStreak = 0;
+  private lastUptime: { uptimeSec: number; at: number } | null = null;
 
   constructor() {
     super();
@@ -126,12 +167,31 @@ export class ConnectionManager extends EventEmitter {
    * The bridge stalls for a second now and then, and a request landing in that window used to
    * answer «не подключено» while the reconnect ladder was already rebuilding the socket. Anything a
    * person is waiting on — playing a sound, publishing a file — gives that a few seconds instead.
+   *
+   * «Socket is open» is not «shell answers»: measured today, a publish died with «No response from
+   * server» on a socket that claimed to be connected. A deliberate action therefore pays for one
+   * tiny liveness exec, and a wedged transport is torn down here so the ladder rebuilds it and the
+   * action is retried inside the same waiting window.
    */
-  async awaitReady(timeoutMs = 6_000): Promise<StationAdapter> {
+  async awaitReady(
+    timeoutMs = 6_000,
+    options: { verifyShell?: boolean } = {},
+  ): Promise<StationAdapter> {
     const deadline = Date.now() + timeoutMs;
     let kicked = false;
     for (;;) {
-      if (this.adapter?.isConnected()) return this.adapter;
+      const adapter = this.adapter;
+      if (adapter?.isConnected()) {
+        if (!options.verifyShell) return adapter;
+        const alive = await adapter
+          .exec('true', { timeoutMs: 3_000, maxBytes: 200 })
+          .then((result) => result.code === 0)
+          .catch(() => false);
+        if (alive) return adapter;
+        await this.teardownAdapter();
+        this.handleUnexpectedClose('оболочка станции не отвечает');
+        continue;
+      }
       if (!this.config) {
         throw new AccError('NO_CONNECTION_CONFIG', 'Не заданы параметры подключения', 400);
       }
@@ -143,13 +203,47 @@ export class ConnectionManager extends EventEmitter {
         void this.connect(undefined, { persist: false, source: 'await-ready' }).catch(() => undefined);
       }
       if (Date.now() >= deadline) {
-        throw new AccError(
-          'NOT_CONNECTED',
-          'Колонка не отвечает. Панель пытается связаться с ней — попробуйте через несколько секунд.',
-          409,
-        );
+        throw new AccError('NOT_CONNECTED', NOT_ANSWERING_MESSAGE, 409);
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+
+  /**
+   * A read-only round trip that survives the station dropping its own socket.
+   *
+   * The column interrupts its SSH transport every few minutes, and the reconnect ladder rebuilds it
+   * in seconds — long before a person would notice, except that the request already in flight came
+   * back with a line of ssh2 chatter («Unable to exec», «No response from server») which the panel
+   * printed as a red error and read as a broken product. So a read that lands in that window
+   * tears the wedged transport down, waits for the ladder and reads again inside the same budget;
+   * only then does it give up, and it gives up with the same honest words the rest of the panel
+   * uses. Deliberate actions are not wrapped here — re-running a write on a retry is not safe.
+   */
+  async stationRead<T>(read: (adapter: StationAdapter) => Promise<T>): Promise<T> {
+    const deadline = Date.now() + READ_WINDOW_MS;
+    let tried = false;
+    for (;;) {
+      const adapter = await this.awaitReady(Math.max(250, deadline - Date.now()));
+      try {
+        return await read(adapter);
+      } catch (error) {
+        if (tried || !isTransportDeath(error) || Date.now() >= deadline) {
+          throw isTransportDeath(error)
+            ? new AccError('NOT_CONNECTED', NOT_ANSWERING_MESSAGE, 409)
+            : error;
+        }
+        tried = true;
+        eventLog.append({
+          level: 'warn',
+          module: 'connection',
+          operation: 'read-retry',
+          result: 'error',
+          message: `Станция оборвала ответ панели (${safeErrorMessage(error)}). Переподключаемся и читаем заново.`,
+        });
+        await this.teardownAdapter();
+        this.handleUnexpectedClose('станция оборвала ответ');
+      }
     }
   }
 
@@ -260,9 +354,17 @@ export class ConnectionManager extends EventEmitter {
     this.manualDisconnect = false;
     this.stopReconnect();
     await this.teardownAdapter();
+    // Re-homing rewrites this.config, so the address being tried has to live there before the probe.
+    this.config = { ...target };
 
-    if (options.source === 'auto-reconnect' && this.attempts >= 2) {
-      await this.rehomeIfNeeded();
+    if (options.source === 'auto-reconnect') {
+      // A saved address that answers nothing is a moved DHCP lease, not a busy station. Probing the
+      // port for 1.5 s and following the MAC beats the old behaviour: four 10-second handshake
+      // timeouts against a dead IP, and then a revival loop that never re-homed at all.
+      const stale = target ? !(await isTcpOpen(target.host, target.port)) : false;
+      if (stale || this.attempts >= 2) {
+        await this.rehomeIfNeeded();
+      }
     }
     const resolved = this.config ?? target;
 
@@ -413,6 +515,42 @@ export class ConnectionManager extends EventEmitter {
     this.info = probe.info;
     this.capabilities = probe.capabilities;
     this.warnings = probe.warnings;
+    this.detectReboot(probe.info.uptimeSec);
+  }
+
+  /**
+   * The column reboots on its own — the update loop keeps retrying — and every such reboot looked like
+   * the panel dropping the connection. `/proc/uptime` cannot lie about that: it either went backwards
+   * or it is far behind what the wall clock promised. Say so in the journal instead of staying silent.
+   */
+  private detectReboot(uptimeSec: number): void {
+    const previous = this.lastUptime;
+    const now = Date.now();
+    this.lastUptime = { uptimeSec, at: now };
+    if (!previous || !(uptimeSec > 0) || !(previous.uptimeSec > 0)) return;
+    const expected = previous.uptimeSec + (now - previous.at) / 1000;
+    const wentBackwards = uptimeSec < previous.uptimeSec;
+    const freshlyBooted = expected - uptimeSec > REBOOT_MIN_GAP_SEC && uptimeSec < REBOOT_FRESH_SEC;
+    if (!wentBackwards && !freshlyBooted) return;
+    const adapter = this.adapter;
+    const reason = adapter
+      ? adapter
+          .exec('cat /sys/class/aml_info/reboot_reason 2>/dev/null', { timeoutMs: 6000, maxBytes: 2000 })
+          .then((result) => result.stdout.trim())
+          .catch(() => '')
+      : Promise.resolve('');
+    void reason.then((value) => {
+      eventLog.append({
+        level: 'warn',
+        module: 'connection',
+        operation: 'station-reboot',
+        result: 'error',
+        message:
+          `Колонка перезагрузилась сама — она включена уже ${Math.round(uptimeSec / 60)} мин. ` +
+          'Панель подключается к ней заново: рвётся связь на стороне устройства, а не панели.',
+        details: { rebootReason: value || null, uptimeSec: Math.round(uptimeSec), lostSec: Math.round(expected - uptimeSec) },
+      });
+    });
   }
 
   private handleUnexpectedClose(reason = 'transport closed'): void {
@@ -465,7 +603,11 @@ export class ConnectionManager extends EventEmitter {
         module: 'connection',
         operation: 'reconnect',
         result: 'error',
-        message: 'Колонка не отвечает. Ищем её в сети каждые 45 секунд.',
+        // Worth saying out loud: no amount of retrying reaches a station on another subnet, and
+        // «вечно переподключается» is usually exactly that — the hotspot changed its range.
+        message: interfaceForHost(this.config.host)
+          ? 'Колонка не отвечает. Ищем её в сети каждые 45 секунд.'
+          : `${this.config.host} не в вашей подсети: компьютер и колонка в разных сетях. Ищем каждые 45 секунд.`,
       });
       this.revivalTimer = setTimeout(() => {
         this.revivalTimer = null;
@@ -516,26 +658,37 @@ export class ConnectionManager extends EventEmitter {
     saveConnection(next);
   }
 
-  /** When the saved address is gone, follow the station to its new IP. */
+  /**
+   * Follow the station to whatever address it holds now. The MAC branch is exact; the sweep is the
+   * fallback for the case that actually bit us — the hotspot moved to a new range, so the address
+   * is gone from the ARP table entirely and only a scan of the current /24 finds the column.
+   */
   private async rehomeIfNeeded(): Promise<void> {
     const config = this.config;
     if (!config) return;
     if (config.mac) {
       const found = await findIpByMac(config.mac).catch(() => null);
-      this.rehome(found ? { host: found, port: config.port, mac: config.mac, reason: `MAC ${config.mac}` } : null);
+      if (found) {
+        this.rehome({ host: found, port: config.port, mac: config.mac, reason: `MAC ${config.mac}` });
+        return;
+      }
+    }
+    const hosts = await discoverSshHosts({ timeoutMs: 6_000 }).catch(() => [] as DiscoveredHost[]);
+    const adopted = pickStation(hosts, config);
+    if (adopted) {
+      this.rehome({ host: adopted.ip, port: adopted.port, mac: adopted.mac, reason: adopted.banner });
       return;
     }
-    // A station that was never reached under this build has no saved MAC, so the only way to keep
-    // up with a new DHCP lease is to recognise it on the network. Adopted only when there is a
-    // single SSH host to choose from — otherwise the user picks it in the wizard.
-    // mDNS holds the first 2.5 s of the budget, so anything under 6 s leaves the port sweep no time
-    // for a full /24 and the station stays invisible. This runs only while reconnecting is failing.
-    const hosts = await discoverSshHosts({ timeoutMs: 6_000 }).catch(() => [] as DiscoveredHost[]);
-    const addresses = new Set(hosts.map((host) => host.ip));
-    if (addresses.size !== 1) return;
-    const host = hosts.find((item) => item.ip === [...addresses][0] && (looksLikeYandex(item) || /dropbear/i.test(item.banner)));
-    if (!host) return;
-    this.rehome({ host: host.ip, port: host.port, mac: host.mac, reason: host.banner });
+    if (hosts.length > 1) {
+      eventLog.append({
+        level: 'warn',
+        module: 'connection',
+        operation: 'rehome',
+        result: 'error',
+        message: 'В сети несколько устройств по SSH — выбираем не вслепую. Откройте мастер подключения.',
+        details: { hosts: hosts.map((host) => `${host.ip}:${host.port}`) },
+      });
+    }
   }
 
   private rehome(found: { host: string; port: number; mac?: string; reason: string } | null): void {

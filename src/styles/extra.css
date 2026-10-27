@@ -437,6 +437,30 @@
   justify-content: flex-end;
 }
 
+/*
+ * Колонки фиксированные: длинное имя не растягивает таблицу, поэтому размеры и даты стоят ровно,
+ * а места хватает и на четыре кнопки в строке.
+ */
+.table--files {
+  table-layout: fixed;
+}
+
+.table--files .col-size {
+  width: 13%;
+}
+
+.table--files .col-date {
+  width: 19%;
+}
+
+.table--files .col-actions {
+  width: 150px;
+}
+
+.table--files .file-name span {
+  min-width: 0;
+}
+
 .console-head {
   display: flex;
   align-items: center;

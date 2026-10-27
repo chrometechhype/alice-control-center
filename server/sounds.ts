@@ -1,8 +1,7 @@
 import type { SoundFile, SoundListing } from '../shared/types.ts';
-import type { StationAdapter, AdapterDirEntry } from './adapters/StationAdapter.ts';
+import type { StationAdapter } from './adapters/StationAdapter.ts';
 import { AccError } from './errors.ts';
-import { isSoundFile, soundCategory } from './parse.ts';
-import { shQuote } from './util.ts';
+import { dirTreeCommand, isSoundFile, parseDirWalk, soundCategory } from './parse.ts';
 import { SOUNDS_ROOT, USER_SOUNDS_ROOT } from './security/paths.ts';
 
 export function soundExt(name: string): string {
@@ -41,78 +40,43 @@ export function toSoundFile(
   };
 }
 
-/**
- * BusyBox `ls` — the only ls this station has — replaces every byte above 0x7f with '?', and no
- * flag or locale changes that. A listing built from it therefore hands the player paths that do not
- * exist, so «проверка звука.mp3» comes back as «????????.mp3» and refuses to play. A shell glob
- * printed with printf keeps the raw bytes, which is what the library needs. Costs two forks per
- * entry (wc and date), acceptable for a directory of clips and far cheaper than a broken path.
- */
-async function listLibraryDir(adapter: StationAdapter, dir: string): Promise<AdapterDirEntry[]> {
-  const command = [
-    `for f in ${shQuote(dir)}/*; do`,
-    '[ -e "$f" ] || [ -L "$f" ] || continue;',
-    'if [ -d "$f" ] && [ ! -L "$f" ]; then t=d; s=0;',
-    'else t=f; s=$(wc -c < "$f" 2>/dev/null || echo 0); fi;',
-    'm=$(date -r "$f" +%s 2>/dev/null || echo 0);',
-    `printf '%s\\t%s\\t%s\\t%s\\n' "$t" "$s" "$m" "$f";`,
-    'done',
-  ].join(' ');
-  const result = await adapter.exec(command, { timeoutMs: 30_000, maxBytes: 2_000_000 });
-  if (result.code !== 0) {
-    throw new AccError(
-      'LIST_FAILED',
-      result.stderr.trim() || `Не удалось прочитать каталог ${dir}`,
-      502,
-    );
-  }
-  const entries: AdapterDirEntry[] = [];
-  for (const line of result.stdout.split('\n')) {
-    const parts = line.split('\t');
-    if (parts.length < 4) continue;
-    const full = parts.slice(3).join('\t');
-    const isDirectory = parts[0] === 'd';
-    entries.push({
-      name: full.slice(full.lastIndexOf('/') + 1),
-      size: Number.parseInt(parts[1], 10) || 0,
-      mtimeMs: (Number.parseInt(parts[2], 10) || 0) * 1000,
-      mode: 0,
-      isDirectory,
-      isFile: parts[0] === 'f',
-      isSymbolicLink: false,
-    });
-  }
-  return entries;
-}
-
 export async function scanSounds(adapter: StationAdapter): Promise<SoundListing> {
   const files: SoundFile[] = [];
   const errors: string[] = [];
-  const walk = async (dir: string, depth: number, origin: 'system' | 'user'): Promise<void> => {
-    if (depth > 4 || files.length >= 1000) return;
-    let entries;
+  const collect = async (root: string, origin: 'system' | 'user'): Promise<void> => {
+    // One shell pass per root. Eleven separate listings used to be needed for the same tree, and a
+    // station that drops every couple of minutes cut the scan halfway through — the library then
+    // showed an arbitrary slice of the sounds it actually holds.
     try {
-      entries = await listLibraryDir(adapter, dir);
+      const result = await adapter.exec(dirTreeCommand(root), {
+        timeoutMs: 45_000,
+        maxBytes: 4_000_000,
+      });
+      if (result.truncated) {
+        throw new AccError('LIST_FAILED', `Слишком много файлов в ${root}`, 502);
+      }
+      if (result.code !== 0) {
+        throw new AccError(
+          'LIST_FAILED',
+          result.stderr.trim() || `Не удалось прочитать каталог ${root}`,
+          502,
+        );
+      }
+      for (const entry of parseDirWalk(result.stdout)) {
+        if (entry.isDirectory || entry.isSymbolicLink) continue;
+        if (!entry.path || !isSoundFile(entry.name)) continue;
+        files.push(toSoundFile(entry.path, entry.size, entry.mtimeMs, origin));
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'ошибка чтения';
       // A missing library is normal before the first upload; a stalled transport is not. Swallowing
       // the second one hides published sounds from the list while the panel still answers 200.
       if (origin === 'user' && ABSENT_OR_STALLED.test(message)) return;
-      errors.push(`${dir}: ${message}`);
-      return;
-    }
-    for (const entry of entries) {
-      if (entry.name === '.' || entry.name === '..') continue;
-      const full = `${dir}/${entry.name}`;
-      if (entry.isDirectory) {
-        await walk(full, depth + 1, origin);
-      } else if (entry.isFile && isSoundFile(entry.name)) {
-        files.push(toSoundFile(full, entry.size, entry.mtimeMs, origin));
-      }
+      errors.push(`${root}: ${message}`);
     }
   };
-  await walk(SOUNDS_ROOT, 0, 'system');
-  await walk(USER_SOUNDS_ROOT, 0, 'user');
+  await collect(SOUNDS_ROOT, 'system');
+  await collect(USER_SOUNDS_ROOT, 'user');
   files.sort((a, b) => a.rel.localeCompare(b.rel, 'ru'));
   return { root: SOUNDS_ROOT, files, scannedAt: Date.now(), errors };
 }

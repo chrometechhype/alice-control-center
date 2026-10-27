@@ -26,8 +26,8 @@ import EmptyState from '@/components/EmptyState.vue';
 import Modal from '@/components/Modal.vue';
 import VolumeControl from '@/components/VolumeControl.vue';
 import { ApiError, api, apiUrl, errorMessage, triggerDownload } from '@/lib/api';
-import { isConnected, pushToast, refreshBackups } from '@/lib/store';
-import { formatBytes, formatRelative } from '@/lib/format';
+import { everConnected, isConnected, pushToast, refreshBackups } from '@/lib/store';
+import { formatBytes, formatRelative, soundCategoryLabel } from '@/lib/format';
 
 const listing = ref<SoundListing | null>(null);
 const loading = ref(false);
@@ -77,6 +77,9 @@ interface StationPlayResult {
   seconds: number;
   converted: boolean;
   finished: boolean;
+  /** Which voice spoke — the configured AI server or the operating system. */
+  voice?: string;
+  engine?: 'ai' | 'local';
 }
 
 const libraryFiles = computed(() => (listing.value?.files ?? []).filter((file) => file.origin === 'user'));
@@ -99,8 +102,8 @@ const categories = computed(() => {
     map.set(file.category, entry);
   }
   const rows = [...map.entries()]
-    .map(([name, value]) => ({ name, ...value }))
-    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'ru'));
+    .map(([name, value]) => ({ name, label: soundCategoryLabel(name), ...value }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'ru'));
   return rows;
 });
 
@@ -263,9 +266,13 @@ async function sayOnStation(): Promise<void> {
   try {
     const result = await api.post<StationPlayResult>('/audio/say', { text }, 200_000);
     speechText.value = '';
+    const from =
+      result.engine === 'local'
+        ? `голосом компьютера «${result.voice ?? 'Windows'}» — это не голос Алисы`
+        : `голосом ИИ «${result.voice ?? ''}»`;
     pushToast(
       'ok',
-      `Колонка говорит через ${result.player}`
+      `Колонка говорит ${from} через ${result.player}`
         + (result.converted ? ' (перекодировано в WAV 48 кГц)' : '')
         + '. Файл удалён со станции сразу после воспроизведения.',
     );
@@ -404,8 +411,8 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-if="!isConnected" class="card">
-      <EmptyState title="Устройство не подключено" text="Sound Studio читает реальный каталог звуков на колонке.">
+    <div v-if="!everConnected" class="card">
+      <EmptyState title="Колонка не отвечает" text="Панель ещё не связалась с колонкой в этой сессии. Sound Studio читает реальный каталог звуков на колонке. Откройте «Мастер подключения» или подождите — панель сама пробует снова.">
         <template #icon><AudioLines :size="22" /></template>
       </EmptyState>
     </div>
@@ -490,7 +497,7 @@ onMounted(() => {
                     <span
                       class="pill"
                       :class="file.origin === 'user' ? 'pill--primary' : 'pill--muted'"
-                    >{{ file.origin === 'user' ? 'библиотека' : file.category }}</span>
+                    >{{ file.origin === 'user' ? 'библиотека' : soundCategoryLabel(file.category) }}</span>
                     <span>{{ file.ext.toUpperCase() }}</span>
                     <span>·</span>
                     <span>{{ formatBytes(file.size) }}</span>
@@ -646,7 +653,7 @@ onMounted(() => {
                 :class="{ active: category === item.name }"
                 @click="category = item.name"
               >
-                <span class="truncate">{{ item.name }}</span>
+                <span class="truncate">{{ item.label }}</span>
                 <span class="mono">{{ item.count }}</span>
               </button>
             </div>
@@ -671,8 +678,10 @@ onMounted(() => {
                 placeholder="Например: загрузка завершена"
               />
               <span class="field-hint">
-                {{ speechText.trim().length }}/{{ speechLimit }} · Модель и голос — в «Настройки» → «ИИ-генератор».
-                Звук играется один раз и не попадает в библиотеку станции.
+                {{ speechText.trim().length }}/{{ speechLimit }} · Голос Алисы недоступен — он синтезируется
+                на сервере Яндекса. Панель говорит через ИИ-провайдера, а если у него нет
+                <span class="mono">/audio/speech</span> — голосом Windows. Звук играется один раз и не
+                попадает в библиотеку станции.
               </span>
             </div>
             <div v-if="speechError" class="alert alert--error">
@@ -789,7 +798,7 @@ onMounted(() => {
           <select id="pack-category" v-model="packCategory" class="select">
             <option value="all">Все звуки</option>
             <option v-for="item in packCategories" :key="item.name" :value="item.name">
-              {{ item.name }} ({{ item.count }})
+              {{ item.label }} ({{ item.count }})
             </option>
           </select>
         </div>

@@ -8,14 +8,16 @@ import { asyncRoute, sendOk } from '../http.ts';
 import { parseAmixerMaster } from '../parse.ts';
 import { assertPlayableSoundPath } from '../security/paths.ts';
 import { findPlayers, playDeviceFile, playTempAudio, synthesizeSpeech } from '../voice.ts';
+import { percentToLevel, percentToRaw, rawToPercent } from '../volumeScale.ts';
 import { clamp } from '../util.ts';
 
 export const audioRouter = Router();
 
 /** ALSA `Master` is the same control Alice's own `set_volume.sh` writes, so both stay in sync. */
 async function readMaster(): Promise<AudioState> {
-  const adapter = await connectionManager.awaitReady();
-  const result = await adapter.exec('amixer sget Master', { timeoutMs: 10_000, maxBytes: 40_000 });
+  const result = await connectionManager.stationRead((adapter) =>
+    adapter.exec('amixer sget Master', { timeoutMs: 10_000, maxBytes: 40_000 }),
+  );
   if (result.code !== 0) {
     throw new AccError(
       'AMIXER_FAILED',
@@ -24,8 +26,12 @@ async function readMaster(): Promise<AudioState> {
     );
   }
   const parsed = parseAmixerMaster(result.stdout);
+  const scale = connectionManager.getInfo()?.volumeScale ?? null;
+  const onAliceScale = scale && parsed.raw != null ? rawToPercent(scale, parsed.raw) : null;
+  const volumePct = onAliceScale ?? parsed.volumePct;
   return {
-    volumePct: parsed.volumePct,
+    volumePct,
+    levelStep: scale && volumePct != null ? percentToLevel(volumePct, scale) : null,
     level: parsed.raw,
     max: parsed.max,
     muted: parsed.muted,
@@ -48,11 +54,16 @@ audioRouter.post(
       throw new AccError('BAD_VOLUME', 'Громкость должна быть от 0 до 100%', 400);
     }
     const percent = clamp(parsed.data.percent, 0, 100);
-    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS);
-    const result = await adapter.exec(`amixer sset Master ${percent}%`, {
-      timeoutMs: 10_000,
-      maxBytes: 40_000,
-    });
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
+    const scale = connectionManager.getInfo()?.volumeScale ?? null;
+    const current = await readMaster();
+    // Writing the register in quasar's units is what makes Alice agree with the slider: the same
+    // raw value read back through her table returns the percentage the person just set.
+    const raw = scale ? percentToRaw(scale, percent, current.max) : null;
+    const result = await adapter.exec(
+      `amixer sset Master ${raw != null ? raw : `${percent}%`}`,
+      { timeoutMs: 10_000, maxBytes: 40_000 },
+    );
     if (result.code !== 0) {
       throw new AccError('AMIXER_FAILED', result.stderr.trim() || 'Не удалось изменить громкость', 502);
     }
@@ -61,7 +72,7 @@ audioRouter.post(
       module: 'audio',
       operation: 'volume',
       result: 'ok',
-      message: `Громкость установлена на ${percent}%`,
+      message: `Громкость установлена на ${percent}%${raw != null ? ` (регистр ${raw})` : ''}`,
     });
     sendOk(res, await readMaster());
   }),
@@ -102,8 +113,7 @@ audioRouter.post(
 audioRouter.get(
   '/players',
   asyncRoute(async (_req, res) => {
-    const adapter = await connectionManager.awaitReady();
-    sendOk(res, { players: await findPlayers(adapter) });
+    sendOk(res, { players: await connectionManager.stationRead((adapter) => findPlayers(adapter)) });
   }),
 );
 
@@ -117,7 +127,7 @@ audioRouter.post(
     const parsed = z.object({ path: z.string().min(1).max(500) }).strict().safeParse(req.body);
     if (!parsed.success) throw new AccError('BAD_REQUEST', 'Нужен путь к звуку на станции', 400);
     const remotePath = assertPlayableSoundPath(parsed.data.path);
-    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS);
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
     const played = await playDeviceFile(adapter, remotePath);
     eventLog.append({
       level: 'info',
@@ -146,7 +156,7 @@ audioRouter.post(
       throw new AccError('BAD_REQUEST', 'Текст для озвучки должен быть от 1 до 300 символов', 400);
     }
     // Check the station before spending a TTS request on it.
-    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS);
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
     const players = await findPlayers(adapter);
     if (!players.length) {
       throw new AccError(
@@ -162,9 +172,15 @@ audioRouter.post(
       module: 'audio',
       operation: 'say',
       result: 'ok',
-      message: `Озвучено: ${parsed.data.text.slice(0, 60)}`,
-      details: { ...played, model: speech.model, voice: speech.voice, bytes: speech.audio.length },
+      message: `Озвучено (${speech.engine === 'local' ? 'системный голос' : 'ИИ'}): ${parsed.data.text.slice(0, 60)}`,
+      details: { ...played, engine: speech.engine, model: speech.model, voice: speech.voice, bytes: speech.audio.length },
     });
-    sendOk(res, { ...played, model: speech.model, voice: speech.voice, bytes: speech.audio.length });
+    sendOk(res, {
+      ...played,
+      engine: speech.engine,
+      model: speech.model,
+      voice: speech.voice,
+      bytes: speech.audio.length,
+    });
   }),
 );

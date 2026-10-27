@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { connectionManager } from '../connection.ts';
-import { AccError } from '../errors.ts';
+import { AccError, isTransportDeath } from '../errors.ts';
 import { eventLog } from '../events.ts';
 import { asyncRoute, sendOk } from '../http.ts';
 import { LOGS_ROOT } from '../security/paths.ts';
@@ -79,11 +79,9 @@ systemRouter.post(
         409,
       );
     }
-    const adapter = connectionManager.requireAdapter();
-    const result = await adapter.exec(`${shQuote(path)} --logo none`, {
-      timeoutMs: 20_000,
-      maxBytes: 500_000,
-    });
+    const result = await connectionManager.stationRead((adapter) =>
+      adapter.exec(`${shQuote(path)} --logo none`, { timeoutMs: 20_000, maxBytes: 500_000 }),
+    );
     eventLog.append({
       level: result.code === 0 ? 'success' : 'error',
       module: 'system',
@@ -111,8 +109,9 @@ systemRouter.post(
 systemRouter.get(
   '/processes',
   asyncRoute(async (_req, res) => {
-    const adapter = connectionManager.requireAdapter();
-    const result = await adapter.exec('ps', { timeoutMs: 10_000, maxBytes: 300_000 });
+    const result = await connectionManager.stationRead((adapter) =>
+      adapter.exec('ps', { timeoutMs: 10_000, maxBytes: 300_000 }),
+    );
     const lines = result.stdout
       .split('\n')
       .map((line) => line.trimEnd())
@@ -134,12 +133,10 @@ systemRouter.get(
     if (!name || !files.includes(name)) {
       throw new AccError('LOG_NOT_ALLOWED', 'Этот лог не входит в список разрешённых', 403);
     }
-    const adapter = connectionManager.requireAdapter();
     const remotePath = `${LOGS_ROOT}/${name}`;
-    const result = await adapter.exec(`tail -c 200000 ${shQuote(remotePath)}`, {
-      timeoutMs: 10_000,
-      maxBytes: 250_000,
-    });
+    const result = await connectionManager.stationRead((adapter) =>
+      adapter.exec(`tail -c 200000 ${shQuote(remotePath)}`, { timeoutMs: 10_000, maxBytes: 250_000 }),
+    );
     if (result.code !== 0) {
       throw new AccError('LOG_READ_FAILED', result.stderr || 'Не удалось прочитать лог', 502);
     }
@@ -161,28 +158,33 @@ const DIAGNOSTIC_COMMANDS: Array<{ label: string; command: string }> = [
 systemRouter.get(
   '/diagnostics',
   asyncRoute(async (_req, res) => {
-    const adapter = connectionManager.requireAdapter();
-    const results = await Promise.all(
-      DIAGNOSTIC_COMMANDS.map(async (item) => {
-        try {
-          const result = await adapter.exec(item.command, { timeoutMs: 8000, maxBytes: 100_000 });
-          return {
-            label: item.label,
-            command: item.command,
-            code: result.code,
-            stdout: result.stdout,
-            stderr: result.stderr,
-          };
-        } catch (error) {
-          return {
-            label: item.label,
-            command: item.command,
-            code: null,
-            stdout: '',
-            stderr: error instanceof Error ? error.message : 'Ошибка',
-          };
-        }
-      }),
+    const results = await connectionManager.stationRead((adapter) =>
+      Promise.all(
+        DIAGNOSTIC_COMMANDS.map(async (item) => {
+          try {
+            const result = await adapter.exec(item.command, { timeoutMs: 8000, maxBytes: 100_000 });
+            return {
+              label: item.label,
+              command: item.command,
+              code: result.code,
+              stdout: result.stdout,
+              stderr: result.stderr,
+            };
+          } catch (error) {
+            return {
+              label: item.label,
+              command: item.command,
+              code: null,
+              stdout: '',
+              stderr: isTransportDeath(error)
+                ? 'Колонка оборвала ответ во время сбора диагностики'
+                : error instanceof Error
+                  ? error.message
+                  : 'Ошибка',
+            };
+          }
+        }),
+      ),
     );
     sendOk(res, { results, collectedAt: Date.now() });
   }),

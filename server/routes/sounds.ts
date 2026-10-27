@@ -66,11 +66,13 @@ const CONTENT_TYPES: Record<string, string> = {
 soundsRouter.get(
   '/',
   asyncRoute(async (_req, res) => {
-    const adapter = await connectionManager.awaitReady();
-    const listing: SoundListing = await scanSounds(adapter);
-    // The library folder only appears after the first upload, so free space is measured one level
-    // up — /data is the partition that actually runs out.
-    const free = await remoteFreeBytes(adapter, path.posix.dirname(USER_SOUNDS_ROOT)).catch(() => null);
+    const { listing, free } = await connectionManager.stationRead(async (adapter) => {
+      const listing = await scanSounds(adapter);
+      // The library folder only appears after the first upload, so free space is measured one level
+      // up — /data is the partition that actually runs out.
+      const free = await remoteFreeBytes(adapter, path.posix.dirname(USER_SOUNDS_ROOT)).catch(() => null);
+      return { listing, free };
+    });
     sendOk(res, { ...listing, userFreeBytes: free?.availableBytes ?? null });
   }),
 );
@@ -79,13 +81,14 @@ soundsRouter.get(
   '/file',
   asyncRoute(async (req, res) => {
     const remotePath = assertPlayableSoundPath(req.query.path);
-    const adapter = await connectionManager.awaitReady();
-    const info = await adapter.stat(remotePath);
-    if (!info.isFile) throw new AccError('NOT_A_FILE', 'Это не файл', 400);
-    if (info.size > 24 * 1024 * 1024) {
-      throw new AccError('FILE_TOO_LARGE', 'Файл больше 24 МБ — предпросмотр недоступен', 413);
-    }
-    const data = await adapter.readFile(remotePath, 24 * 1024 * 1024);
+    const data = await connectionManager.stationRead(async (adapter) => {
+      const info = await adapter.stat(remotePath);
+      if (!info.isFile) throw new AccError('NOT_A_FILE', 'Это не файл', 400);
+      if (info.size > 24 * 1024 * 1024) {
+        throw new AccError('FILE_TOO_LARGE', 'Файл больше 24 МБ — предпросмотр недоступен', 413);
+      }
+      return adapter.readFile(remotePath, 24 * 1024 * 1024);
+    });
     const ext = soundExt(remotePath);
     res.setHeader('Content-Type', CONTENT_TYPES[ext] ?? 'application/octet-stream');
     res.setHeader('Content-Length', String(data.length));
@@ -118,7 +121,7 @@ soundsRouter.post(
       throw new AccError('FILE_REQUIRED', 'Не передан аудиофайл', 400);
     }
     const remotePath = assertSoundPath(parsed.data.path);
-    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS);
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
     const info = await adapter.stat(remotePath);
     if (!info.isFile) throw new AccError('NOT_A_FILE', 'Цель замены не является файлом', 400);
 
@@ -223,7 +226,7 @@ soundsRouter.post(
     if (!looksLikeAudio(ext, file.buffer)) {
       throw new AccError('INVALID_AUDIO', `Содержимое файла не похоже на .${ext}`, 415);
     }
-    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS);
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
     const target = `${USER_SOUNDS_ROOT}/${name}`;
     const exists = await adapter
       .exec(`[ -f ${shQuote(target)} ] && echo YES`, { timeoutMs: 10_000 })
@@ -276,7 +279,7 @@ soundsRouter.post(
       throw new AccError('CONFIRMATION_REQUIRED', 'Удаление звука требует подтверждения', 400);
     }
     const target = assertUserSoundPath(parsed.data.path);
-    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS);
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
     await removeDeviceFile(adapter, target);
     eventLog.append({
       level: 'warn',

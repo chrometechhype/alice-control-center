@@ -1,4 +1,4 @@
-import { computed, reactive } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import type {
   AccEvent,
   AppSettings,
@@ -55,6 +55,13 @@ export const store = reactive({
 });
 
 export const isConnected = computed(() => store.status.state === 'connected');
+/**
+ * The column interrupts its own SSH transport every few minutes and the ladder rebuilds it in
+ * seconds. That window is not «no station»: a panel that blanks itself into «устройство не
+ * подключено» every few minutes is what made people believe the connection was broken. Once the
+ * column has answered in this session, the screens keep what they already learned.
+ */
+export const everConnected = ref(false);
 export const deviceName = computed(() => store.info?.modelGuess || 'Яндекс Станция');
 
 let toastSeq = 0;
@@ -143,6 +150,7 @@ function resetDeviceState(): void {
 export function applySnapshot(snapshot: ConnectionSnapshot): void {
   const wasConnected = store.status.state === 'connected';
   store.status = snapshot.status;
+  if (snapshot.status.state === 'connected') everConnected.value = true;
   store.info = snapshot.info;
   store.capabilities = snapshot.capabilities;
   store.warnings = snapshot.warnings ?? [];
@@ -155,7 +163,7 @@ export function applySnapshot(snapshot: ConnectionSnapshot): void {
   if (snapshot.status.state === 'connected' && !wasConnected && !store.audio.state) {
     void refreshAudio().catch(() => undefined);
   }
-  if (snapshot.status.state !== 'connected') {
+  if (snapshot.status.state === 'disconnected' || snapshot.status.state === 'error') {
     store.audio.state = null;
     store.audio.known = false;
   }

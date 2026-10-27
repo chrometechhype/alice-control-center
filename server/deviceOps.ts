@@ -39,11 +39,31 @@ export async function writeDeviceFile(
   }
 }
 
+/**
+ * `rm -f` exits 0 for a path that never existed, so an unverified delete tells the user the file is
+ * gone while it is still on the station — which is exactly how a sound looked undeletable. The
+ * existence checks around the `rm` turn «already gone» and «station refused» into real errors.
+ */
 export async function removeDeviceFile(adapter: StationAdapter, remotePath: string): Promise<void> {
+  const command = [
+    `p=${shQuote(remotePath)};`,
+    'if [ ! -e "$p" ] && [ ! -L "$p" ]; then echo MISSING; exit 0; fi;',
+    'if [ -d "$p" ] && [ ! -L "$p" ]; then rm -rf "$p"; else rm -f "$p"; fi;',
+    'if [ -e "$p" ] || [ -L "$p" ]; then echo SURVIVED; exit 0; fi;',
+    'echo GONE',
+  ].join(' ');
   const remove = async () => {
-    const result = await adapter.exec(`rm -f ${shQuote(remotePath)}`, { timeoutMs: 10_000 });
-    if (result.code !== 0) {
-      throw new AccError('DELETE_FAILED', result.stderr.trim() || 'Не удалось удалить файл', 502);
+    const result = await adapter.exec(command, { timeoutMs: 15_000 });
+    const verdict = result.stdout.trim().split('\n').pop();
+    if (result.code !== 0 || verdict === 'SURVIVED') {
+      throw new AccError(
+        'DELETE_FAILED',
+        result.stderr.trim() || 'Станция не удалила файл — каталог может быть доступен только на чтение',
+        502,
+      );
+    }
+    if (verdict === 'MISSING') {
+      throw new AccError('DELETE_FAILED', `Файла уже нет на станции: ${remotePath}`, 404);
     }
     await adapter.exec('sync', { timeoutMs: 20_000 }).catch(() => undefined);
   };

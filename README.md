@@ -1,6 +1,6 @@
 # Alice Control Center
 
-![Alice Control Center](docs/cover.png?v=0.3.0)
+![Alice Control Center](docs/cover.png?v=1.0.0-alpha.1)
 
 Локальная панель управления рутованной Яндекс Станцией с компьютера или телефона — для всей
 линейки станций с Алисой, от первой Лайт до Дуо Макс.
@@ -100,6 +100,13 @@ $env:ACC_INSTALL_DIR = 'D:\Apps\AliceControlCenter'
 irm https://raw.githubusercontent.com/chrometechhype/alice-control-center/main/install.ps1 | iex
 ```
 
+Пре-релизы (например `1.0.0-alpha.1`) не попадают в «последний релиз», поэтому их ставят с тегом:
+
+```powershell
+$env:ACC_VERSION = 'v1.0.0-alpha.1'
+irm https://raw.githubusercontent.com/chrometechhype/alice-control-center/main/install.ps1 | iex
+```
+
 ### Значок в трее
 
 Ярлык запускает панель без окна консоли и показывает значок в области уведомлений:
@@ -116,25 +123,28 @@ backend работать, «Остановить панель и выйти» з
 
 ### Готовый архив
 
-1. Скачайте `Alice-Control-Center-0.3.0.zip` и `Alice-Control-Center-0.3.0.zip.sha256`
+1. Скачайте `Alice-Control-Center-<версия>.zip` и `Alice-Control-Center-<версия>.zip.sha256`
    со страницы [Releases](https://github.com/chrometechhype/alice-control-center/releases/latest).
 2. Сверьте контрольную сумму:
 
    Windows:
 
    ```bat
-   certutil -hashfile Alice-Control-Center-0.3.0.zip SHA256
+   certutil -hashfile Alice-Control-Center-<версия>.zip SHA256
    ```
 
    macOS/Linux:
 
    ```bash
-   sha256sum -c Alice-Control-Center-0.3.0.zip.sha256
+   sha256sum -c Alice-Control-Center-<версия>.zip.sha256
    ```
 
 3. Распакуйте архив в любую папку и запустите:
    - Windows: `start.bat`
    - macOS/Linux: `./start.sh`
+
+Пре-релизы отмечены на [странице Releases](https://github.com/chrometechhype/alice-control-center/releases),
+но по ссылке «последний релиз» не отдаются — для них нужен тег.
 
 Скрипт установит зависимости, соберёт frontend при необходимости и запустит backend на
 `http://127.0.0.1:8722`. Папка `data/` создастся при первом запуске.
@@ -375,7 +385,7 @@ npm test           # unit-тесты
 npm run package    # release/alice-control-center + ZIP + SHA-256
 ```
 
-Версия хранится в `package.json`. Релиз публикуется тегом `vX.Y.Z`: workflow
+Версия хранится в `package.json`. Релиз публикуется тегом `vX.Y.Z` (пре-релиз — `vX.Y.Z-alpha.N`): workflow
 [release.yml](.github/workflows/release.yml) собирает проект, запускает тесты, упаковывает
 `release/Alice-Control-Center-X.Y.Z.zip` и прикладывает архив с `.sha256` к GitHub Release.
 
@@ -389,10 +399,11 @@ git push --follow-tags
 ```bash
 npm run build
 npm run package
-gh release create v0.3.0 release/Alice-Control-Center-0.3.0.zip \
-  release/Alice-Control-Center-0.3.0.zip.sha256 \
-  --title "Alice Control Center 0.3.0" \
-  --notes-file docs/release-notes/0.3.0.md
+gh release create v1.0.0-alpha.1 release/Alice-Control-Center-1.0.0-alpha.1.zip \
+  release/Alice-Control-Center-1.0.0-alpha.1.zip.sha256 \
+  --title "Alice Control Center 1.0.0 Alpha 1" \
+  --notes-file docs/release-notes/1.0.0-alpha.1.md \
+  --prerelease
 ```
 
 Список изменений — [CHANGELOG.md](CHANGELOG.md).

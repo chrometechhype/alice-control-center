@@ -380,6 +380,28 @@ function pingArgs(ip: string): string[] {
     : ['-c', '1', '-W', '1', ip];
 }
 
+/**
+ * Is anything listening on that address at all. A saved host that answers nothing means the lease
+ * moved, and finding that out in 1.5 s instead of a 10 s handshake timeout is what keeps the
+ * reconnect ladder short enough for the panel to look alive.
+ */
+export function isTcpOpen(host: string, port: number, timeoutMs = 1500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port });
+    let settled = false;
+    const finish = (value: boolean): void => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(value);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.on('connect', () => finish(true));
+    socket.on('timeout', () => finish(false));
+    socket.on('error', () => finish(false));
+  });
+}
+
 function ping(ip: string): Promise<void> {
   return new Promise((resolve) => {
     const child = execFile('ping', pingArgs(ip), { windowsHide: true, timeout: 1500 }, () => resolve());

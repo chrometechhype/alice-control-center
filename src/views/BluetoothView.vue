@@ -19,7 +19,7 @@ import {
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import { api, errorMessage } from '@/lib/api';
-import { isConnected, pushToast, store } from '@/lib/store';
+import { everConnected, isConnected, pushToast, store } from '@/lib/store';
 
 interface BtController {
   adapter: string | null;
@@ -62,6 +62,7 @@ const btCap = computed(() => store.capabilities?.bluetooth);
 const available = computed(() => Boolean(btCap.value?.available));
 const devices = computed(() => status.value?.devices ?? []);
 const connectedDevices = computed(() => devices.value.filter((device) => device.connected));
+const bondedCount = computed(() => devices.value.filter((device) => device.paired).length);
 const controller = computed(() => status.value?.controller ?? null);
 
 const controllerName = computed(
@@ -90,11 +91,16 @@ async function scan(): Promise<void> {
   scanning.value = true;
   error.value = '';
   try {
-    const result = await api.post<{ devices: BtDevice[]; scannedAt: number }>('/bluetooth/scan', {
+    const result = await api.post<{ until: number; seconds: number }>('/bluetooth/scan', {
       seconds: scanSeconds.value,
     });
-    pushToast('ok', `Сканирование завершено: найдено ${result.devices.length}`);
+    // The column scans on its own; the panel keeps reading the list so devices appear as they answer.
+    while (Date.now() < result.until) {
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      await load();
+    }
     await load();
+    pushToast('ok', `Сканирование завершено: найдено ${devices.value.length}`);
   } catch (caught) {
     error.value = errorMessage(caught);
     pushToast('error', error.value);
@@ -224,8 +230,8 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-if="!isConnected" class="card">
-      <EmptyState title="Устройство не подключено" text="Bluetooth Manager управляет адаптером самой колонки.">
+    <div v-if="!everConnected" class="card">
+      <EmptyState title="Колонка не отвечает" text="Панель ещё не связалась с колонкой в этой сессии. Bluetooth Manager управляет адаптером самой колонки. Откройте «Мастер подключения» или подождите — панель сама пробует снова.">
         <template #icon><Bluetooth :size="22" /></template>
       </EmptyState>
     </div>
@@ -257,9 +263,9 @@ onMounted(() => {
           </div>
         </div>
         <div class="card stat">
-          <div class="stat-top"><span class="stat-label">Известных устройств</span><Link2 :size="15" class="muted" /></div>
+          <div class="stat-top"><span class="stat-label">Устройств в списке</span><Link2 :size="15" class="muted" /></div>
           <div class="stat-value">{{ devices.length }}</div>
-          <div class="stat-foot"><span>Из вывода bluetoothctl</span><span class="mono">paired</span></div>
+          <div class="stat-foot"><span>Сопряжено навсегда</span><span class="mono">{{ bondedCount }}</span></div>
         </div>
         <div class="card stat">
           <div class="stat-top"><span class="stat-label">Подключено</span><BluetoothConnected :size="15" class="muted" /></div>
@@ -300,7 +306,8 @@ onMounted(() => {
                 <div class="list-title truncate">{{ device.name }}</div>
                 <div class="list-meta">
                   <span class="mono">{{ device.address }}</span>
-                  <span v-if="device.paired" class="pill pill--muted">paired</span>
+                  <span v-if="device.paired" class="pill pill--muted">сопряжено</span>
+                  <span v-else class="pill pill--warn">только в кэше поиска</span>
                   <span v-if="device.connected" class="pill pill--ok">подключено</span>
                 </div>
               </div>
@@ -313,7 +320,7 @@ onMounted(() => {
                 >
                   <LoaderCircle v-if="busyAddress === device.address" :size="14" class="spin" />
                   <Link2 v-else :size="14" />
-                  Подключить
+                  {{ device.paired ? 'Подключить' : 'Сопрячь и подключить' }}
                 </button>
                 <button
                   v-else

@@ -169,3 +169,30 @@ export function eventLevelLabel(level: string): string {
       return 'Инфо';
   }
 }
+
+let russianLanguageNames: Intl.DisplayNames | null = null;
+try {
+  russianLanguageNames = new Intl.DisplayNames(['ru'], { type: 'language' });
+} catch {
+  russianLanguageNames = null;
+}
+
+/**
+ * The station keeps its own sounds in folders named after locales — «ar-EG», «ru-RU» — and a Russian
+ * panel full of those codes reads like a list of sounds nobody added. Name the language instead and
+ * leave anything we cannot name exactly as the station calls it.
+ */
+export function soundCategoryLabel(category: string): string {
+  if (category === 'common') return 'Общие';
+  if (category === 'root') return 'Без папки';
+  const locale = /^([a-z]{2,3})(?:-([a-z]{2}))?$/i.exec(category);
+  if (!locale) return category;
+  let name: string | undefined;
+  try {
+    name = russianLanguageNames?.of(locale[1].toLowerCase());
+  } catch {
+    name = undefined;
+  }
+  if (!name || name === locale[1]) return category;
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)}`;
+}

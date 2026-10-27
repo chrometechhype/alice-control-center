@@ -21,7 +21,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import { api, errorMessage } from '@/lib/api';
 import { hslToRgb, rgbCss } from '@/lib/format';
-import { isConnected, pushToast, store } from '@/lib/store';
+import { everConnected, isConnected, pushToast, store } from '@/lib/store';
 
 interface AnimationResult {
   started: boolean;
@@ -334,8 +334,8 @@ async function restoreNative(): Promise<void> {
       </div>
     </div>
 
-    <div v-if="!isConnected" class="card">
-      <EmptyState title="Устройство не подключено" text="Fun Lab использует реальное LED-кольцо колонки.">
+    <div v-if="!everConnected" class="card">
+      <EmptyState title="Колонка не отвечает" text="Панель ещё не связалась с колонкой в этой сессии. Fun Lab использует реальное LED-кольцо колонки. Откройте «Мастер подключения» или подождите — панель сама пробует снова.">
         <template #icon><Wand2 :size="22" /></template>
       </EmptyState>
     </div>

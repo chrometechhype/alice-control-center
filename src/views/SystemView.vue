@@ -20,7 +20,7 @@ import {
 } from '@lucide/vue';
 import EmptyState from '@/components/EmptyState.vue';
 import { api, errorMessage } from '@/lib/api';
-import { isConnected, pushToast, refreshProbe, store } from '@/lib/store';
+import { everConnected, isConnected, pushToast, refreshProbe, store } from '@/lib/store';
 import {
   formatBytes,
   formatNumber,
@@ -323,8 +323,8 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-if="!isConnected" class="card">
-      <EmptyState title="Устройство не подключено" text="Системный монитор работает только по данным с колонки.">
+    <div v-if="!everConnected" class="card">
+      <EmptyState title="Колонка не отвечает" text="Панель ещё не связалась с колонкой в этой сессии. Системный монитор работает только по данным с колонки. Откройте «Мастер подключения» или подождите — панель сама пробует снова.">
         <template #icon><Server :size="22" /></template>
         <RouterLink to="/setup" class="btn btn--primary mt-12">Открыть мастер</RouterLink>
       </EmptyState>

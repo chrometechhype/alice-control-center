@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { connectionManager } from '../connection.ts';
+import { ACTION_READY_WAIT_MS, connectionManager } from '../connection.ts';
 import { AccError } from '../errors.ts';
 import { eventLog } from '../events.ts';
 import { asyncRoute, sendOk } from '../http.ts';
@@ -92,7 +92,7 @@ terminalRouter.post(
         403,
       );
     }
-    const adapter = connectionManager.requireAdapter();
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
     const result = await adapter.exec(command, { timeoutMs: 20_000, maxBytes: 300_000 });
     eventLog.append({
       level: result.code === 0 ? 'info' : 'warn',

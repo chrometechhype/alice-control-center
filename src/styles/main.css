@@ -308,6 +308,9 @@ ul {
   line-height: 1.2;
   border: 1px solid transparent;
   transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+  /* The link clips itself for the ripple, so flex would happily squash it below its text height
+     instead of letting .nav scroll — the label disappeared from the sidebar on short screens. */
+  flex: none;
 }
 
 .nav-link:hover {
@@ -834,6 +837,9 @@ ul {
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease,
     box-shadow 0.15s ease;
   user-select: none;
+  /* A button clips its own label when a tight row squeezes it, so let the row wrap instead. */
+  flex-shrink: 0;
+  overflow: visible;
 }
 
 .btn:hover:not(:disabled) {
@@ -1254,6 +1260,9 @@ ul {
   color: var(--muted);
   cursor: pointer;
   white-space: nowrap;
+  /* Buttons clip their own label when a tight row shrinks them; let the .tabs row scroll instead. */
+  flex: none;
+  overflow: visible;
 }
 
 .tab.active {

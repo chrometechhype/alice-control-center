@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { Client, type ClientChannel, type SFTPWrapper } from 'ssh2';
 import type { DeviceConnectionConfig } from '../../shared/types.ts';
 import { AccError } from '../errors.ts';
-import { parseLsLong } from '../parse.ts';
+import { dirWalkCommand, parseDirWalk, parseLsLong } from '../parse.ts';
 import { shQuote } from '../util.ts';
 import type {
   AdapterDirEntry,
@@ -684,14 +684,14 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
         // переходим к shell-листингу
       }
     }
-    let result = await this.exec(`ls -la --full-time ${shQuote(remotePath)}`, {
-      timeoutMs: 10_000,
-      maxBytes: 2_000_000,
+    let result = await this.exec(dirWalkCommand(remotePath, true), {
+      timeoutMs: 20_000,
+      maxBytes: 4_000_000,
     });
     if (result.code !== 0) {
-      result = await this.exec(`ls -la ${shQuote(remotePath)}`, {
-        timeoutMs: 10_000,
-        maxBytes: 2_000_000,
+      result = await this.exec(dirWalkCommand(remotePath, false), {
+        timeoutMs: 20_000,
+        maxBytes: 4_000_000,
       });
     }
     if (result.code !== 0) {
@@ -701,7 +701,7 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
         502,
       );
     }
-    return parseLsLong(result.stdout).filter((entry) => entry.name !== '.' && entry.name !== '..');
+    return parseDirWalk(result.stdout);
   }
 
   async stat(remotePath: string): Promise<AdapterStat> {

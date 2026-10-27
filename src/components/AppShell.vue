@@ -98,6 +98,16 @@ const route = useRoute();
 const sidebarOpen = ref(false);
 const refreshing = ref(false);
 
+const pageLabel = computed(() => {
+  for (const group of navGroups) {
+    const hit = group.items.find((item) =>
+      item.to === '/' ? route.path === '/' : route.path.startsWith(item.to),
+    );
+    if (hit) return hit.label;
+  }
+  return 'Alice Control Center';
+});
+
 const deviceVisual = computed(() => detectDeviceVisual(store.info));
 const themeTitle = computed(() => {
   const next = store.theme === 'light' ? 'тёмную' : 'светлую';
@@ -152,31 +162,34 @@ async function refresh(): Promise<void> {
       </RouterLink>
 
       <div class="sidebar-controls">
-        <StatusPill :state="store.status.state" />
-        <span class="pill topbar-ws" :class="wsTone" :title="`WebSocket: ${store.wsState}`">
-          <Wifi :size="13" />
-          {{ wsLabel }}
-        </span>
-        <span class="spacer" />
-        <button
-          type="button"
-          class="btn btn--icon btn--sm"
-          title="Обновить данные"
-          :disabled="refreshing"
-          @click="refresh"
-        >
-          <RefreshCw :size="15" :class="{ spin: refreshing }" />
-        </button>
-        <button
-          type="button"
-          class="btn btn--icon btn--sm"
-          :title="themeTitle"
-          :disabled="store.updatingSettings"
-          @click="toggleTheme"
-        >
-          <Moon v-if="store.theme === 'light'" :size="15" />
-          <Sun v-else :size="15" />
-        </button>
+        <div class="sidebar-controls__status">
+          <StatusPill :state="store.status.state" compact />
+          <span class="pill topbar-ws" :class="wsTone" :title="`WebSocket: ${store.wsState}`">
+            <Wifi :size="13" />
+            {{ wsLabel }}
+          </span>
+        </div>
+        <div class="sidebar-controls__actions">
+          <button
+            type="button"
+            class="btn btn--icon btn--sm"
+            title="Обновить данные"
+            :disabled="refreshing"
+            @click="refresh"
+          >
+            <RefreshCw :size="15" :class="{ spin: refreshing }" />
+          </button>
+          <button
+            type="button"
+            class="btn btn--icon btn--sm"
+            :title="themeTitle"
+            :disabled="store.updatingSettings"
+            @click="toggleTheme"
+          >
+            <Moon v-if="store.theme === 'light'" :size="15" />
+            <Sun v-else :size="15" />
+          </button>
+        </div>
       </div>
 
       <RouterLink to="/setup" class="device-mini">
@@ -247,6 +260,10 @@ async function refresh(): Promise<void> {
         >
           <Menu :size="18" />
         </button>
+        <div class="topbar-title">
+          <span class="topbar-title__page">{{ pageLabel }}</span>
+          <span class="topbar-title__device mono truncate">{{ deviceName }}</span>
+        </div>
         <div class="topbar-spacer" />
         <div class="topbar-actions">
           <span class="pill topbar-ws" :class="wsTone" :title="`WebSocket: ${store.wsState}`">

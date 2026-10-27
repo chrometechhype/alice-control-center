@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { LedZone } from '../shared/types.ts';
+import { shQuote } from './util.ts';
 
 export function parseSections(raw: string): Record<string, string> {
   const sections: Record<string, string> = {};
@@ -136,6 +137,8 @@ function modeStringToNumber(mode: string): number {
 
 export interface LsEntry {
   name: string;
+  /** Full path as the shell saw it; only the byte-safe walkers can offer it, `ls` mangles it. */
+  path?: string;
   size: number;
   mtimeMs: number;
   mode: number;
@@ -196,6 +199,84 @@ export function parseLsLong(text: string): LsEntry[] {
   return entries;
 }
 
+/**
+ * BusyBox `ls` — the only ls on this station — replaces every byte above 0x7f with '?', and no flag,
+ * locale or `-b`/`-Q` form changes that. A listing built straight from it therefore hands the UI
+ * paths that do not exist, so «проверка кириллицы.wav» comes back as 39 '?' and refuses to open or
+ * delete. A shell glob printed with `printf` keeps the raw bytes, so the name is taken from the glob
+ * and only the attributes come from `ls`, where mangling is harmless. Costs one `ls` per entry —
+ * tens of milliseconds on a directory of this size, and far cheaper than a broken path.
+ */
+export function dirWalkCommand(remotePath: string, fullTime = true): string {
+  const flag = fullTime ? '--full-time ' : '';
+  return [
+    `d=${shQuote(remotePath)};`,
+    'if [ ! -d "$d" ]; then echo "ls: cannot access $d: No such file or directory" >&2; exit 2; fi;',
+    'for f in "$d"/* "$d"/.[!.]* "$d"/..?*; do',
+    '[ -e "$f" ] || [ -L "$f" ] || continue;',
+    'if [ -L "$f" ]; then k=l;',
+    'elif [ -d "$f" ]; then k=d;',
+    'elif [ -f "$f" ]; then k=f;',
+    'else k=o; fi;',
+    `a=$(ls -ld ${flag}"$f" 2>/dev/null);`,
+    `printf '%s\\t%s\\t%s\\n' "$k" "$a" "$f";`,
+    'done',
+  ].join(' ');
+}
+
+/** Turns one `dirWalkCommand` line into an entry: `ls` attributes plus the byte-safe path. */
+export function parseDirWalk(text: string): LsEntry[] {
+  const entries: LsEntry[] = [];
+  for (const line of text.split('\n')) {
+    const kindEnd = line.indexOf('\t');
+    const attrsEnd = line.indexOf('\t', kindEnd + 1);
+    if (kindEnd < 0 || attrsEnd < 0) continue;
+    const fullPath = line.slice(attrsEnd + 1);
+    const name = fullPath.slice(fullPath.lastIndexOf('/') + 1);
+    if (!name) continue;
+    const kind = line.slice(0, kindEnd);
+    const [attrs] = parseLsLong(line.slice(kindEnd + 1, attrsEnd));
+    entries.push(
+      attrs
+        ? { ...attrs, name, path: fullPath }
+        : {
+            name,
+            path: fullPath,
+            size: 0,
+            mtimeMs: 0,
+            mode: 0,
+            isDirectory: kind === 'd',
+            isFile: kind === 'f',
+            isSymbolicLink: kind === 'l',
+          },
+    );
+  }
+  return entries;
+}
+
+/** The same walk as `dirWalkCommand`, but descending into subdirectories in one shell pass. */
+export function dirTreeCommand(remotePath: string, maxDepth = 4, fullTime = true): string {
+  const flag = fullTime ? '--full-time ' : '';
+  return [
+    `d=${shQuote(remotePath)};`,
+    'if [ ! -d "$d" ]; then echo "ls: cannot access $d: No such file or directory" >&2; exit 2; fi;',
+    'walk() {',
+    'local t=$1 k=$2 f k2 a;',
+    'for f in "$t"/* "$t"/.[!.]* "$t"/..?*; do',
+    '[ -e "$f" ] || [ -L "$f" ] || continue;',
+    'if [ -L "$f" ]; then k2=l;',
+    'elif [ -d "$f" ]; then k2=d;',
+    'elif [ -f "$f" ]; then k2=f;',
+    'else k2=o; fi;',
+    `a=$(ls -ld ${flag}"$f" 2>/dev/null);`,
+    `printf '%s\\t%s\\t%s\\n' "$k2" "$a" "$f";`,
+    `if [ "$k2" = d ] && [ "$k" -lt ${maxDepth} ]; then walk "$f" $((k + 1)); fi;`,
+    'done;',
+    '};',
+    'walk "$d" 1',
+  ].join(' ');
+}
+
 export function parseWifiRssi(text: string): number | null {
   for (const line of text.split('\n')) {
     const match = /^\s*\w+:\s+\S+\s+\S+\s+(-?\d+)\.?/.exec(line);
@@ -250,6 +331,74 @@ export function parseBluetoothctlShow(text: string): {
       : null,
     address: /^\s*Controller\s+([0-9A-F:]{17})/im.exec(text)?.[1] ?? null,
   };
+}
+
+export const BT_DEVICES_MARK = '@@ACC_DEVICES@@';
+export const BT_PAIRED_MARK = '@@ACC_PAIRED@@';
+export const BT_CONNECTED_MARK = '@@ACC_CONNECTED@@';
+
+export interface BtBatch {
+  show: string;
+  known: string;
+  paired: string;
+  connected: string;
+}
+
+/**
+ * The panel asks for `show`, `devices`, `devices Paired` and `devices Connected` in a single exec —
+ * one SSH channel instead of four — and splits the answer back apart on the markers it echoed
+ * between commands. `paired` is missing when the marker never arrived, and the caller then treats
+ * every known device as paired rather than guessing from an empty block.
+ */
+export function parseBtBatch(stdout: string): BtBatch {
+  const parts = stdout.split(
+    new RegExp(`${BT_DEVICES_MARK}|${BT_PAIRED_MARK}|${BT_CONNECTED_MARK}`),
+  );
+  return {
+    show: (parts[0] ?? '').trim(),
+    known: parts[1] ?? '',
+    paired: parts[2] ?? '',
+    connected: parts[3] ?? '',
+  };
+}
+
+/**
+ * True when `bluetoothctl devices Paired` ran. An empty block means «no bonded devices» — the honest
+ * answer — while an old bluetoothctl prints its usage text instead, which the caller falls back on.
+ */
+export function bluetoothPairedFilterWorks(batch: BtBatch): boolean {
+  return !/too many arguments|usage:|unknown|not supported/i.test(batch.paired);
+}
+
+/**
+ * `bluetoothctl` answers in English, and BlueZ errors are useless without context: «Device XX not
+ * available» means BlueZ has no live object for that address, which almost always means the earbuds
+ * sleep in the case, are out of range or are held by the phone. The raw text goes to the journal;
+ * this is what the person in front of the panel reads, together with the action that fixes it.
+ */
+export function explainBtFailure(output: string, address: string): string {
+  const text = output.trim();
+  if (!text) return 'bluetoothctl не ответил — колонка не отвечает.';
+  const lower = text.toLowerCase();
+  if (lower.includes('not powered'))
+    return 'Bluetooth-адаптер колонки выключен. Нажмите «Включить» и повторите.';
+  if (lower.includes('alreadyexists') || lower.includes('already paired'))
+    return `Устройство ${address} уже сопряжено — повторное сопряжение не нужно, просто нажмите «Подключить».`;
+  if (lower.includes('authentication') || lower.includes('pin code'))
+    return 'Наушники отклонили сопряжение. Так бывает, когда они уже заняты телефоном: отключите их там и повторите.';
+  if (
+    lower.includes('host is down') ||
+    lower.includes('page timeout') ||
+    lower.includes('timed out') ||
+    lower.includes('not available')
+  )
+    return `Колонка не достучалась до ${address}: наушники спят в кейсе, далеко или подключены к телефону. К двум устройствам сразу они не умеют — отключите их на телефоне, поднесите к колонке, нажмите «Сканировать» и повторите.`;
+  if (lower.includes('no such device') || lower.includes('invalid arguments'))
+    return `Колонка не знает адрес ${address}. Нажмите «Сканировать», чтобы найти устройство заново.`;
+  if (lower.includes('not connected')) return `${address} уже отключено — активного соединения нет.`;
+  if (lower.includes('busy') || lower.includes('in progress'))
+    return 'Адаптер колонки занят другим Bluetooth-действием. Подождите 10-15 секунд и повторите.';
+  return `Bluetooth-действие не удалось: ${text.split('\n').filter(Boolean).at(-1) ?? text}`;
 }
 
 export interface AmixerMaster {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildScene, extractJsonObject } from '../server/sceneDsl.ts';
+import { buildScene, extractJsonObject, parseSceneIntent } from '../server/sceneDsl.ts';
 
 const ZONES = 12;
 
@@ -14,6 +14,13 @@ function spec(overrides: Record<string, unknown> = {}) {
     reverse: false,
     ...overrides,
   });
+}
+
+/** Effects like pulse and breathe run at partial gain in some frames, so colours are checked at the brightest one. */
+function brightestZone(frames: number[][][]): number[] {
+  return frames
+    .map((frame) => frame[0] ?? [0, 0, 0])
+    .reduce((a, b) => (b.reduce((s, v) => s + v, 0) > a.reduce((s, v) => s + v, 0) ? b : a), [0, 0, 0]);
 }
 
 describe('extractJsonObject', () => {
@@ -88,7 +95,21 @@ describe('buildScene', () => {
     expect(scene?.name).toBe('красный');
     expect(scene?.fps).toBe(16);
     expect(scene?.frames).toHaveLength(16);
-    expect(scene?.frames[0]?.[0]).toEqual([230, 0, 0]);
+    // «красный» in the description wins over the violet/red the model picked.
+    expect(scene?.frames[0]?.[0]).toEqual([230, 41, 41]);
+  });
+
+  it('obeys colour, motion and tempo words in the description', () => {
+    const alarm = buildScene(spec({ effect: 'chase', colors: ['#7f5af0'], fps: 10 }), ZONES, 'мигает красным, быстро');
+    expect(alarm?.fps).toBe(24);
+    expect(brightestZone(alarm?.frames ?? [])).toEqual([230, 41, 41]);
+    // pulse alternates between bright and near-dark, a chase never does.
+    const dimmest = Math.min(...(alarm?.frames.flat() ?? []).flat());
+    expect(dimmest).toBeLessThan(20);
+
+    const calm = buildScene(spec({ effect: 'sweep', colors: ['#ff8b1f'], fps: 40 }), ZONES, 'плавно дышит зелёным');
+    expect(calm?.fps).toBe(8);
+    expect(brightestZone(calm?.frames ?? [])).toEqual([40, 164, 113]);
   });
 
   it('keeps every effect loopable and lit', () => {
@@ -133,5 +154,39 @@ describe('buildScene', () => {
     expect(scene?.name).toBe('Дождь');
     expect(scene?.fps).toBe(15);
     expect(scene?.frames).toHaveLength(16);
+  });
+});
+
+describe('parseSceneIntent', () => {
+  it('reads colour, motion and tempo out of a Russian request', () => {
+    expect(parseSceneIntent('мигает красным очень быстро')).toEqual({
+      colors: ['#ff2d2d'],
+      effect: 'pulse',
+      speed: 'fast',
+    });
+    expect(parseSceneIntent('плавно дышит зелёным')).toEqual({
+      colors: ['#2cb67d'],
+      effect: 'breathe',
+      speed: 'slow',
+    });
+    expect(parseSceneIntent('плавные зелёные волны')).toEqual({
+      colors: ['#2cb67d'],
+      effect: 'ripple',
+      speed: 'slow',
+    });
+  });
+
+  it('keeps several named colours in the order they were asked for', () => {
+    expect(parseSceneIntent('переливы из синего в розовый').colors).toEqual(['#3a5bd9', '#ff5da2']);
+    expect(parseSceneIntent('радуга').colors).toHaveLength(6);
+  });
+
+  it('says nothing when the description gives nothing to obey', () => {
+    expect(parseSceneIntent('сделай что-нибудь праздничное')).toEqual({
+      colors: [],
+      effect: null,
+      speed: null,
+    });
+    expect(parseSceneIntent('').colors).toEqual([]);
   });
 });

@@ -22,7 +22,7 @@ import EmptyState from '@/components/EmptyState.vue';
 import Modal from '@/components/Modal.vue';
 import { api, errorMessage } from '@/lib/api';
 import { hexToRgb, hslToRgb, rgbCss, rgbToHex } from '@/lib/format';
-import { isConnected, pushToast, store } from '@/lib/store';
+import { everConnected, isConnected, pushToast, store } from '@/lib/store';
 
 interface LedZoneView {
   index: number;
@@ -320,8 +320,8 @@ onBeforeUnmount(stopLocalAnimationTimer);
       </div>
     </div>
 
-    <div v-if="!isConnected" class="card">
-      <EmptyState title="Устройство не подключено" text="LED Studio работает с реальным кольцом колонки.">
+    <div v-if="!everConnected" class="card">
+      <EmptyState title="Колонка не отвечает" text="Панель ещё не связалась с колонкой в этой сессии. LED Studio работает с реальным кольцом колонки. Откройте «Мастер подключения» или подождите — панель сама пробует снова.">
         <template #icon><Lightbulb :size="22" /></template>
       </EmptyState>
     </div>

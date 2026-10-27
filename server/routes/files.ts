@@ -2,11 +2,12 @@ import path from 'node:path';
 import { Router } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
-import type { FileEntry } from '../../shared/types.ts';
-import { connectionManager } from '../connection.ts';
+import type { FileEntry, FileRoot } from '../../shared/types.ts';
+import { ACTION_READY_WAIT_MS, connectionManager } from '../connection.ts';
 import { AccError } from '../errors.ts';
 import { eventLog } from '../events.ts';
 import { asyncRoute, sendOk } from '../http.ts';
+import { removeDeviceFile } from '../deviceOps.ts';
 import {
   FILE_ROOTS,
   assertReadablePath,
@@ -26,11 +27,37 @@ const upload = multer({
 });
 
 const TEXT_MAX_BYTES = 512 * 1024;
+/** Which of the catalogued directories are on this station changes only when someone installs YAM. */
+const ROOTS_CACHE_MS = 20_000;
+let rootsCache: { at: number; value: FileRoot[] } | null = null;
 
 filesRouter.get(
   '/roots',
   asyncRoute(async (_req, res) => {
-    sendOk(res, { roots: FILE_ROOTS });
+    if (rootsCache && Date.now() - rootsCache.at < ROOTS_CACHE_MS) {
+      return sendOk(res, { roots: rootsCache.value });
+    }
+    const adapter = connectionManager.getAdapter();
+    let existing: Set<string> | null = null;
+    if (adapter?.isConnected()) {
+      const check = FILE_ROOTS.map(
+        (root) => `[ -d ${shQuote(root.path)} ] && echo "EX ${root.path}" || echo "MISS ${root.path}"`,
+      ).join('; ');
+      const probe = await adapter
+        .exec(check, { timeoutMs: 12_000, maxBytes: 20_000 })
+        .catch(() => null);
+      if (probe && probe.code === 0) {
+        existing = new Set(
+          probe.stdout
+            .split('\n')
+            .filter((line) => line.startsWith('EX '))
+            .map((line) => line.slice(3).trim()),
+        );
+      }
+    }
+    const roots: FileRoot[] = FILE_ROOTS.map((root) => ({ ...root, exists: existing ? existing.has(root.path) : true }));
+    if (existing) rootsCache = { at: Date.now(), value: roots };
+    sendOk(res, { roots });
   }),
 );
 
@@ -38,8 +65,7 @@ filesRouter.get(
   '/list',
   asyncRoute(async (req, res) => {
     const remotePath = assertReadablePath(req.query.path);
-    const adapter = connectionManager.requireAdapter();
-    const entries = await adapter.listDir(remotePath);
+    const entries = await connectionManager.stationRead((adapter) => adapter.listDir(remotePath));
     const mapped: FileEntry[] = entries
       .filter((entry) => entry.name !== '.' && entry.name !== '..')
       .map((entry) => {
@@ -77,13 +103,14 @@ filesRouter.get(
   '/read',
   asyncRoute(async (req, res) => {
     const remotePath = assertReadablePath(req.query.path);
-    const adapter = connectionManager.requireAdapter();
-    const info = await adapter.stat(remotePath);
-    if (!info.isFile) throw new AccError('NOT_A_FILE', 'Это не файл', 400);
-    if (info.size > TEXT_MAX_BYTES) {
-      throw new AccError('FILE_TOO_LARGE', 'Файл больше 512 КБ — используйте скачивание', 413);
-    }
-    const data = await adapter.readFile(remotePath, TEXT_MAX_BYTES);
+    const { info, data } = await connectionManager.stationRead(async (adapter) => {
+      const info = await adapter.stat(remotePath);
+      if (!info.isFile) throw new AccError('NOT_A_FILE', 'Это не файл', 400);
+      if (info.size > TEXT_MAX_BYTES) {
+        throw new AccError('FILE_TOO_LARGE', 'Файл больше 512 КБ — используйте скачивание', 413);
+      }
+      return { info, data: await adapter.readFile(remotePath, TEXT_MAX_BYTES) };
+    });
     if (data.includes(0)) {
       throw new AccError('BINARY_FILE', 'Файл бинарный — предпросмотр недоступен', 415);
     }
@@ -100,7 +127,7 @@ filesRouter.get(
   '/download',
   asyncRoute(async (req, res) => {
     const remotePath = assertReadablePath(req.query.path);
-    const adapter = connectionManager.requireAdapter();
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
     const info = await adapter.stat(remotePath);
     if (!info.isFile) throw new AccError('NOT_A_FILE', 'Скачивание доступно только для файлов', 400);
     if (info.size > 64 * 1024 * 1024) {
@@ -131,7 +158,7 @@ filesRouter.post(
     }
     const target = assertWritablePath(path.posix.join(directory, name));
     assertSafeUpload(name, req.file.buffer);
-    const adapter = connectionManager.requireAdapter();
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
     const info = await adapter.stat(directory);
     if (!info.isDirectory) throw new AccError('NOT_A_DIRECTORY', 'Цель не является каталогом', 400);
     await adapter.writeFile(target, req.file.buffer);
@@ -153,7 +180,7 @@ filesRouter.post(
     const parsed = z.object({ path: z.string().min(1) }).safeParse(req.body);
     if (!parsed.success) throw new AccError('BAD_REQUEST', 'Не указан путь', 400);
     const target = assertWritablePath(parsed.data.path);
-    const adapter = connectionManager.requireAdapter();
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
     const result = await adapter.exec(`mkdir -p ${shQuote(target)}`, { timeoutMs: 8000 });
     if (result.code !== 0) {
       throw new AccError('MKDIR_FAILED', result.stderr.trim() || 'Не удалось создать каталог', 502);
@@ -174,7 +201,7 @@ filesRouter.post(
     if (isWithin(from, to) || isWithin(to, from)) {
       throw new AccError('BAD_RENAME', 'Нельзя переместить каталог внутрь самого себя', 400);
     }
-    const adapter = connectionManager.requireAdapter();
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
     const result = await adapter.exec(`mv ${shQuote(from)} ${shQuote(to)}`, { timeoutMs: 15_000 });
     if (result.code !== 0) {
       throw new AccError('RENAME_FAILED', result.stderr.trim() || 'Не удалось переименовать', 502);
@@ -205,13 +232,8 @@ filesRouter.post(
     if (!root || target === root.path) {
       throw new AccError('BAD_PATH', 'Нельзя удалить корень разрешённого каталога', 400);
     }
-    const adapter = connectionManager.requireAdapter();
-    const info = await adapter.stat(target);
-    const command = info.isDirectory ? `rm -rf ${shQuote(target)}` : `rm -f ${shQuote(target)}`;
-    const result = await adapter.exec(command, { timeoutMs: 15_000 });
-    if (result.code !== 0) {
-      throw new AccError('DELETE_FAILED', result.stderr.trim() || 'Не удалось удалить', 502);
-    }
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
+    await removeDeviceFile(adapter, target);
     eventLog.append({
       level: 'warn',
       module: 'files',

@@ -5,6 +5,7 @@
 #
 # Installs into %LOCALAPPDATA%\AliceControlCenter (override with ACC_INSTALL_DIR),
 # keeps the existing data folder, verifies SHA-256 and creates a desktop shortcut.
+# Set ACC_VERSION to a tag (for example v1.0.0-alpha.1) to install a prerelease.
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -12,6 +13,8 @@ $ProgressPreference = 'SilentlyContinue'
 function Install-AliceControlCenter {
   $repo = 'chrometechhype/alice-control-center'
   $port = 8722
+  # A prerelease is invisible to /releases/latest, so a tag asks for it by name.
+  $tag = if ($env:ACC_VERSION) { $env:ACC_VERSION } else { $null }
   $installDir = if ($env:ACC_INSTALL_DIR) { $env:ACC_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'AliceControlCenter' }
 
   function Update-SessionPath {
@@ -75,8 +78,14 @@ function Install-AliceControlCenter {
   }
 
   $headers = @{ 'User-Agent' = 'acc-installer'; 'Accept' = 'application/vnd.github+json' }
-  Write-Host 'Fetching the latest release...'
-  $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -Headers $headers -TimeoutSec 30
+  $releaseUrl = if ($tag) {
+    Write-Host "Fetching release $tag..."
+    "https://api.github.com/repos/$repo/releases/tags/$tag"
+  } else {
+    Write-Host 'Fetching the latest release...'
+    "https://api.github.com/repos/$repo/releases/latest"
+  }
+  $release = Invoke-RestMethod -Uri $releaseUrl -Headers $headers -TimeoutSec 30
   $version = $release.tag_name -replace '^v', ''
   $zipAsset = $release.assets | Where-Object { $_.name -like '*.zip' } | Select-Object -First 1
   $sumAsset = $release.assets | Where-Object { $_.name -like '*.zip.sha256' } | Select-Object -First 1

@@ -10,7 +10,7 @@ import {
   listBackups,
   restoreBackup,
 } from '../backups.ts';
-import { connectionManager } from '../connection.ts';
+import { ACTION_READY_WAIT_MS, connectionManager } from '../connection.ts';
 import { remoteSha256 } from '../deviceOps.ts';
 import { AccError } from '../errors.ts';
 import { eventLog } from '../events.ts';
@@ -52,7 +52,7 @@ backupsRouter.post(
     if (!parsed.success) {
       throw new AccError('CONFIRMATION_REQUIRED', 'Бэкап конфигурации требует подтверждения', 400);
     }
-    const adapter = connectionManager.requireAdapter();
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
     const sources: Array<{ targetPath: string; mode: string }> = [];
     for (const target of CONFIG_TARGETS) {
       try {
@@ -116,7 +116,7 @@ backupsRouter.get(
   '/:id/verify',
   asyncRoute(async (req, res) => {
     const manifest = getBackup(routeParam(req.params.id));
-    const adapter = connectionManager.requireAdapter();
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
     const items = [];
     for (const item of manifest.items) {
       try {
@@ -149,7 +149,7 @@ backupsRouter.post(
       throw new AccError('CONFIRMATION_REQUIRED', 'Восстановление требует подтверждения', 400);
     }
     const manifest = getBackup(routeParam(req.params.id));
-    const adapter = connectionManager.requireAdapter();
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
     const result = await restoreBackup(adapter, manifest.id);
     const failed = result.restored.filter((item) => !item.ok);
     eventLog.append({
