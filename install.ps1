@@ -88,10 +88,18 @@ function Install-AliceControlCenter {
     $zipPath = Join-Path $temp $zipAsset.name
     Write-Host "Downloading $($zipAsset.name) ($version)..."
     Invoke-WebRequest -Uri $zipAsset.browser_download_url -OutFile $zipPath -UseBasicParsing
-    $sumText = [string](Invoke-WebRequest -Uri $sumAsset.browser_download_url -UseBasicParsing).Content
+    $sumResponse = Invoke-WebRequest -Uri $sumAsset.browser_download_url -UseBasicParsing
+    $sumText = if ($sumResponse.Content -is [byte[]]) {
+      [System.Text.Encoding]::UTF8.GetString($sumResponse.Content)
+    } else {
+      [string]$sumResponse.Content
+    }
     $expected = ($sumText.Trim() -split '\s+')[0].ToLowerInvariant()
     $actual = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if (-not $expected -or $expected -ne $actual) {
+    if ($expected -notmatch '^[0-9a-f]{64}$') {
+      throw "The SHA-256 file has an unexpected format: $expected"
+    }
+    if ($expected -ne $actual) {
       throw "SHA-256 mismatch. Expected $expected, got $actual."
     }
     Write-Host "SHA-256 verified: $actual"
