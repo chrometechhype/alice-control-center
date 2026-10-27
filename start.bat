@@ -9,6 +9,13 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem Already running? Just open the panel.
+powershell -NoProfile -Command "try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', 8722); $c.Close(); exit 0 } catch { exit 1 }" >nul 2>nul
+if not errorlevel 1 (
+  start "" "http://127.0.0.1:8722"
+  exit /b 0
+)
+
 if not exist node_modules (
   echo Installing dependencies...
   call npm install
@@ -22,6 +29,7 @@ if not exist dist (
 )
 
 echo Starting Alice Control Center on http://127.0.0.1:8722
+start "" /b powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 4; Start-Process 'http://127.0.0.1:8722'"
 call npm start
 exit /b %errorlevel%
 
