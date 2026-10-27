@@ -31,19 +31,21 @@ function Install-AliceControlCenter {
   }
 
   function Stop-RunningPanel {
-    $listener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
-      Select-Object -First 1
-    if ($listener) {
+    for ($attempt = 0; $attempt -lt 20; $attempt += 1) {
+      $listener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+      if (-not $listener) { break }
       $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
       if (-not $process -or $process.Name -ne 'node.exe' -or $process.CommandLine -notmatch 'server[\\/]index\.ts') {
         throw "Port $port is used by another program. Close it and run the installer again."
       }
       Write-Host 'Stopping the running panel...'
-      Stop-Process -Id $process.ProcessId -Force
-      for ($attempt = 0; $attempt -lt 20; $attempt += 1) {
-        Start-Sleep -Milliseconds 250
-        if (-not (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)) { break }
-      }
+      # tsx spawns a child that keeps the port, so re-scan after every kill.
+      Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+      Start-Sleep -Milliseconds 300
+    }
+    if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) {
+      throw "Port $port is still busy. Stop the panel and run the installer again."
     }
     $trays = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
       Where-Object { $_.CommandLine -match 'acc-tray\.ps1' }

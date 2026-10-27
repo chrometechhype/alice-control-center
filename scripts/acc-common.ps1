@@ -65,24 +65,22 @@ function Start-AccBackend {
 }
 
 function Stop-AccBackend {
-  $process = Get-AccListeningProcess
-  if (-not $process) {
-    return $true
-  }
-  if ($process.Name -and $process.Name -ne 'node.exe') {
-    return $false
-  }
-  if ($process.CommandLine -and $process.CommandLine -notmatch 'server[\\/]index\.ts') {
-    return $false
-  }
-  Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
   for ($attempt = 0; $attempt -lt 20; $attempt += 1) {
-    Start-Sleep -Milliseconds 250
-    if (-not (Get-AccListeningProcess)) {
+    $process = Get-AccListeningProcess
+    if (-not $process) {
       return $true
     }
+    if ($process.Name -and $process.Name -ne 'node.exe') {
+      return $false
+    }
+    if ($process.CommandLine -and $process.CommandLine -notmatch 'server[\\/]index\.ts') {
+      return $false
+    }
+    # tsx spawns a child that keeps the port, so re-scan after every kill.
+    Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 300
   }
-  return $false
+  return -not (Get-AccListeningProcess)
 }
 
 function Restart-AccBackend {
