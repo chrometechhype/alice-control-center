@@ -1,6 +1,6 @@
 # Alice Control Center
 
-![Alice Control Center](docs/cover.png?v=0.2.2)
+![Alice Control Center](docs/cover.png?v=0.2.3)
 
 Локальная панель управления рутованной Яндекс Станцией с компьютера или телефона — для всей
 линейки станций с Алисой, от первой Лайт до Дуо Макс.
@@ -34,6 +34,7 @@ Vue 3 + TypeScript на фронтенде, Node.js + Express на backend, св
 - **Event Center** — журнал операций с очисткой секретов.
 - **Плагины и YAM** — просмотр состояния, без установки случайных бинарников.
 - **Обновления** — проверка релизов GitHub, SHA-256, резервная копия и откат при ошибке.
+- **Установка и трей** — установка одной командой, ярлык на рабочем столе, значок состояния с запуском и остановкой панели.
 - **Оформление** — Material You 3 Expressive, светлая/тёмная/системная тема, динамические акценты под цвет корпуса Алисы.
 - **Приветствие** — пошаговое знакомство, контакт автора в Telegram.
 
@@ -75,22 +76,60 @@ Backend по умолчанию слушает только `127.0.0.1`. Дос�
 
 ## Быстрый старт
 
+### Установка одной командой (Windows)
+
+Откройте PowerShell и вставьте:
+
+```powershell
+irm https://raw.githubusercontent.com/chrometechhype/alice-control-center/main/install.ps1 | iex
+```
+
+Установщик:
+
+- проверяет Node.js 20+ и при отсутствии предлагает поставить LTS через `winget`;
+- скачивает последний релиз GitHub и сверяет SHA-256 — без контрольной суммы установка
+  отменяется;
+- ставит панель в `%LOCALAPPDATA%\AliceControlCenter`, сохраняя `data/` при обновлении;
+- создаёт ярлык «Alice Control Center» на рабочем столе;
+- запускает панель на `http://127.0.0.1:8722` и значок состояния в трее.
+
+Права администратора не нужны. Другую папку можно задать перед запуском:
+
+```powershell
+$env:ACC_INSTALL_DIR = 'D:\Apps\AliceControlCenter'
+irm https://raw.githubusercontent.com/chrometechhype/alice-control-center/main/install.ps1 | iex
+```
+
+### Значок в трее
+
+Ярлык запускает панель без окна консоли и показывает значок в области уведомлений:
+
+| Значок | Состояние |
+| --- | --- |
+| зелёный | панель работает, станция подключена |
+| жёлтый | панель работает, станция не подключена |
+| серый | панель остановлена |
+
+Правый клик — открыть, запустить, остановить или перезапустить панель, проверить обновления,
+открыть папку и журнал, скрыть значок. Двойной клик открывает панель. «Скрыть значок» оставляет
+backend работать, «Остановить панель и выйти» завершает и панель, и значок.
+
 ### Готовый архив
 
-1. Скачайте `Alice-Control-Center-0.2.2.zip` и `Alice-Control-Center-0.2.2.zip.sha256`
+1. Скачайте `Alice-Control-Center-0.2.3.zip` и `Alice-Control-Center-0.2.3.zip.sha256`
    со страницы [Releases](https://github.com/chrometechhype/alice-control-center/releases/latest).
 2. Сверьте контрольную сумму:
 
    Windows:
 
    ```bat
-   certutil -hashfile Alice-Control-Center-0.2.2.zip SHA256
+   certutil -hashfile Alice-Control-Center-0.2.3.zip SHA256
    ```
 
    macOS/Linux:
 
    ```bash
-   sha256sum -c Alice-Control-Center-0.2.2.zip.sha256
+   sha256sum -c Alice-Control-Center-0.2.3.zip.sha256
    ```
 
 3. Распакуйте архив в любую папку и запустите:
@@ -317,10 +356,10 @@ git push --follow-tags
 ```bash
 npm run build
 npm run package
-gh release create v0.2.2 release/Alice-Control-Center-0.2.2.zip \
-  release/Alice-Control-Center-0.2.2.zip.sha256 \
-  --title "Alice Control Center 0.2.2" \
-  --notes-file docs/release-notes/0.2.2.md
+gh release create v0.2.3 release/Alice-Control-Center-0.2.3.zip \
+  release/Alice-Control-Center-0.2.3.zip.sha256 \
+  --title "Alice Control Center 0.2.3" \
+  --notes-file docs/release-notes/0.2.3.md
 ```
 
 Список изменений — [CHANGELOG.md](CHANGELOG.md).

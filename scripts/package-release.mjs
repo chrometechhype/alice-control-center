@@ -31,10 +31,17 @@ const files = [
   'vite.config.ts',
   'start.bat',
   'start.sh',
+  'install.ps1',
 ];
 const directories = ['dist', 'src', 'server', 'shared', 'public', 'tests', 'docs'];
 
-for (const required of ['dist/index.html', 'scripts/apply-update.mjs']) {
+for (const required of [
+  'dist/index.html',
+  'scripts/apply-update.mjs',
+  'scripts/acc-common.ps1',
+  'scripts/acc-start.ps1',
+  'scripts/acc-tray.ps1',
+]) {
   if (!fs.existsSync(path.join(root, required))) {
     throw new Error(`Не найден ${required}. Сначала выполните npm run build.`);
   }
@@ -52,7 +59,9 @@ function copy(relativePath) {
 for (const file of files) copy(file);
 for (const directory of directories) copy(directory);
 fs.mkdirSync(path.join(releaseRoot, 'scripts'), { recursive: true });
-copy('scripts/apply-update.mjs');
+for (const script of ['apply-update.mjs', 'acc-common.ps1', 'acc-start.ps1', 'acc-tray.ps1']) {
+  copy(`scripts/${script}`);
+}
 
 if (process.platform !== 'win32') {
   fs.chmodSync(path.join(releaseRoot, 'start.sh'), 0o755);
@@ -78,6 +87,7 @@ const scanExtensions = new Set([
   '.css',
   '.sh',
   '.bat',
+  '.ps1',
   '.yml',
   '.yaml',
 ]);
