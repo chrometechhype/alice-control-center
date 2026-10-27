@@ -21,7 +21,7 @@ import { AccError } from './errors.ts';
 import { eventLog } from './events.ts';
 import { MetricsService } from './metrics.ts';
 import { runProbe, type ProbeResult } from './probe.ts';
-import { findIpByMac, macOfIp } from './discovery.ts';
+import { discoverSshHosts, findIpByMac, looksLikeYandex, macOfIp, type DiscoveredHost } from './discovery.ts';
 import { safeErrorMessage } from './util.ts';
 
 const MAX_FAST_ATTEMPTS = 4;
@@ -193,10 +193,20 @@ export class ConnectionManager extends EventEmitter {
     }
     const promise = this.openConnection(config, options);
     this.connectPromise = promise;
+    let failed: unknown;
     try {
       return await promise;
+    } catch (error) {
+      failed = error;
+      throw error;
     } finally {
       if (this.connectPromise === promise) this.connectPromise = null;
+      // A failed attempt nobody scheduled would leave the panel in «Ошибка» forever — that is the
+      // «вечное переподключение» complaint. The ladder refuses to start while a connect promise is
+      // alive, so it is kicked only after the slot is released.
+      if (failed && options.source !== 'auto-reconnect' && this.config?.autoReconnect && !this.manualDisconnect) {
+        this.scheduleReconnect();
+      }
     }
   }
 
@@ -468,21 +478,38 @@ export class ConnectionManager extends EventEmitter {
     saveConnection(next);
   }
 
-  /** When the saved address is gone, follow the station's MAC to its new IP. */
+  /** When the saved address is gone, follow the station to its new IP. */
   private async rehomeIfNeeded(): Promise<void> {
     const config = this.config;
-    if (!config?.mac) return;
-    const found = await findIpByMac(config.mac).catch(() => null);
-    if (!found || found === config.host) return;
-    this.config = { ...config, host: found };
+    if (!config) return;
+    if (config.mac) {
+      const found = await findIpByMac(config.mac).catch(() => null);
+      this.rehome(found ? { host: found, port: config.port, mac: config.mac, reason: `MAC ${config.mac}` } : null);
+      return;
+    }
+    // A station that was never reached under this build has no saved MAC, so the only way to keep
+    // up with a new DHCP lease is to recognise it on the network. Adopted only when there is a
+    // single SSH host to choose from — otherwise the user picks it in the wizard.
+    const hosts = await discoverSshHosts({ timeoutMs: 3_000 }).catch(() => [] as DiscoveredHost[]);
+    const addresses = new Set(hosts.map((host) => host.ip));
+    if (addresses.size !== 1) return;
+    const host = hosts.find((item) => item.ip === [...addresses][0] && (looksLikeYandex(item) || /dropbear/i.test(item.banner)));
+    if (!host) return;
+    this.rehome({ host: host.ip, port: host.port, mac: host.mac, reason: host.banner });
+  }
+
+  private rehome(found: { host: string; port: number; mac?: string; reason: string } | null): void {
+    const config = this.config;
+    if (!config || !found || config.host === found.host) return;
+    this.config = { ...config, host: found.host, port: found.port, mac: found.mac ?? config.mac };
     saveConnection(this.config);
     eventLog.append({
       level: 'info',
       module: 'connection',
       operation: 'rehome',
       result: 'ok',
-      message: `Колонка сменила адрес: ${config.host} → ${found}`,
-      details: { mac: config.mac },
+      message: `Колонка найдена в сети: ${config.host}:${config.port} → ${found.host}:${found.port}`,
+      details: { reason: found.reason, previousHost: config.host, mac: this.config.mac ?? null },
     });
   }
 
