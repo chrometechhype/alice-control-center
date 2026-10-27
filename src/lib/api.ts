@@ -26,6 +26,8 @@ interface ApiEnvelope<T> {
   error?: ApiErrorShape;
 }
 
+const panelAuthCodes = new Set(['UNAUTHORIZED', 'BAD_TOKEN']);
+
 export async function request<T>(
   path: string,
   init: RequestInit = {},
@@ -70,7 +72,11 @@ export async function request<T>(
       payload = null;
     }
   }
-  if (response.status === 401 && !path.startsWith('/auth/login')) {
+  if (
+    response.status === 401 &&
+    !path.startsWith('/auth/login') &&
+    panelAuthCodes.has(payload?.error?.code ?? '')
+  ) {
     window.dispatchEvent(new CustomEvent('acc:unauthorized'));
   }
   if (!response.ok || !payload?.ok) {

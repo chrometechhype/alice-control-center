@@ -98,7 +98,8 @@ export async function callAi(
   }
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
-      throw new AccError('AI_AUTH', 'ИИ-сервер отклонил ключ. Проверьте API-ключ в настройках.', 401);
+      // Not 401: the frontend logs the user out of ACC on any panel 401.
+      throw new AccError('AI_AUTH', 'ИИ-сервер отклонил ключ. Проверьте API-ключ в настройках.', 502);
     }
     if (response.status === 404) {
       throw new AccError(

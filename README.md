@@ -1,6 +1,6 @@
 # Alice Control Center
 
-![Alice Control Center](docs/cover.png?v=0.2.3)
+![Alice Control Center](docs/cover.png?v=0.2.4)
 
 Локальная панель управления рутованной Яндекс Станцией с компьютера или телефона — для всей
 линейки станций с Алисой, от первой Лайт до Дуо Макс.
@@ -116,20 +116,20 @@ backend работать, «Остановить панель и выйти» з
 
 ### Готовый архив
 
-1. Скачайте `Alice-Control-Center-0.2.3.zip` и `Alice-Control-Center-0.2.3.zip.sha256`
+1. Скачайте `Alice-Control-Center-0.2.4.zip` и `Alice-Control-Center-0.2.4.zip.sha256`
    со страницы [Releases](https://github.com/chrometechhype/alice-control-center/releases/latest).
 2. Сверьте контрольную сумму:
 
    Windows:
 
    ```bat
-   certutil -hashfile Alice-Control-Center-0.2.3.zip SHA256
+   certutil -hashfile Alice-Control-Center-0.2.4.zip SHA256
    ```
 
    macOS/Linux:
 
    ```bash
-   sha256sum -c Alice-Control-Center-0.2.3.zip.sha256
+   sha256sum -c Alice-Control-Center-0.2.4.zip.sha256
    ```
 
 3. Распакуйте архив в любую папку и запустите:
@@ -356,10 +356,10 @@ git push --follow-tags
 ```bash
 npm run build
 npm run package
-gh release create v0.2.3 release/Alice-Control-Center-0.2.3.zip \
-  release/Alice-Control-Center-0.2.3.zip.sha256 \
-  --title "Alice Control Center 0.2.3" \
-  --notes-file docs/release-notes/0.2.3.md
+gh release create v0.2.4 release/Alice-Control-Center-0.2.4.zip \
+  release/Alice-Control-Center-0.2.4.zip.sha256 \
+  --title "Alice Control Center 0.2.4" \
+  --notes-file docs/release-notes/0.2.4.md
 ```
 
 Список изменений — [CHANGELOG.md](CHANGELOG.md).
