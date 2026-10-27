@@ -45,19 +45,14 @@ jobs:
           if [ ! -f "$NOTES" ]; then
             NOTES="CHANGELOG.md"
           fi
-          # A tag like v1.0.0-alpha.1 must stay out of /releases/latest, otherwise
-          # the built-in updater offers it to stable installs.
-          FLAG=""
-          case "${TAG#v}" in
-            *-*) FLAG="--prerelease" ;;
-          esac
+          # Any tag, including an alpha one, is published as the latest release: the
+          # version suffix carries the maturity, not a GitHub prerelease flag.
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release/*.zip release/*.zip.sha256 --clobber
-            gh release edit "$TAG" --notes-file "$NOTES" $FLAG
+            gh release edit "$TAG" --notes-file "$NOTES"
           else
             gh release create "$TAG" release/*.zip release/*.zip.sha256 \
               --title "Alice Control Center ${TAG#v}" \
               --notes-file "$NOTES" \
-              --verify-tag \
-              $FLAG
+              --verify-tag
           fi

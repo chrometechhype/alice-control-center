@@ -5,7 +5,7 @@
 #
 # Installs into %LOCALAPPDATA%\AliceControlCenter (override with ACC_INSTALL_DIR),
 # keeps the existing data folder, verifies SHA-256 and creates a desktop shortcut.
-# Set ACC_VERSION to a tag (for example v1.0.0-alpha.1) to install a prerelease.
+# Set ACC_VERSION to a tag (for example v1.0.0-alpha.1) to install that exact version.
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -13,7 +13,7 @@ $ProgressPreference = 'SilentlyContinue'
 function Install-AliceControlCenter {
   $repo = 'chrometechhype/alice-control-center'
   $port = 8722
-  # A prerelease is invisible to /releases/latest, so a tag asks for it by name.
+  # ACC_VERSION pins an exact tag; without it the installer takes the latest release.
   $tag = if ($env:ACC_VERSION) { $env:ACC_VERSION } else { $null }
   $installDir = if ($env:ACC_INSTALL_DIR) { $env:ACC_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'AliceControlCenter' }
 

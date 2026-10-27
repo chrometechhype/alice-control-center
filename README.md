@@ -100,7 +100,7 @@ $env:ACC_INSTALL_DIR = 'D:\Apps\AliceControlCenter'
 irm https://raw.githubusercontent.com/chrometechhype/alice-control-center/main/install.ps1 | iex
 ```
 
-Пре-релизы (например `1.0.0-alpha.1`) не попадают в «последний релиз», поэтому их ставят с тегом:
+Нужна конкретная версия, а не последняя — например альфа `1.0.0-alpha.1`:
 
 ```powershell
 $env:ACC_VERSION = 'v1.0.0-alpha.1'
@@ -143,8 +143,8 @@ backend работать, «Остановить панель и выйти» з
    - Windows: `start.bat`
    - macOS/Linux: `./start.sh`
 
-Пре-релизы отмечены на [странице Releases](https://github.com/chrometechhype/alice-control-center/releases),
-но по ссылке «последний релиз» не отдаются — для них нужен тег.
+Текущая линия — `1.0.0-alpha.1`; она публикуется как обычный релиз, поэтому лежит по ссылке
+«последний релиз» и приходит через автообновление.
 
 Скрипт установит зависимости, соберёт frontend при необходимости и запустит backend на
 `http://127.0.0.1:8722`. Папка `data/` создастся при первом запуске.
@@ -385,9 +385,11 @@ npm test           # unit-тесты
 npm run package    # release/alice-control-center + ZIP + SHA-256
 ```
 
-Версия хранится в `package.json`. Релиз публикуется тегом `vX.Y.Z` (пре-релиз — `vX.Y.Z-alpha.N`): workflow
-[release.yml](.github/workflows/release.yml) собирает проект, запускает тесты, упаковывает
+Версия хранится в `package.json`. Релиз публикуется тегом `vX.Y.Z` (альфа-линия — `vX.Y.Z-alpha.N`):
+workflow [release.yml](.github/workflows/release.yml) собирает проект, запускает тесты, упаковывает
 `release/Alice-Control-Center-X.Y.Z.zip` и прикладывает архив с `.sha256` к GitHub Release.
+Степень зрелости видна в самой версии, поэтому тег с `-` публикуется как обычный релиз и попадает в
+«последний».
 
 ```bash
 npm version patch
@@ -402,8 +404,7 @@ npm run package
 gh release create v1.0.0-alpha.1 release/Alice-Control-Center-1.0.0-alpha.1.zip \
   release/Alice-Control-Center-1.0.0-alpha.1.zip.sha256 \
   --title "Alice Control Center 1.0.0 Alpha 1" \
-  --notes-file docs/release-notes/1.0.0-alpha.1.md \
-  --prerelease
+  --notes-file docs/release-notes/1.0.0-alpha.1.md
 ```
 
 Список изменений — [CHANGELOG.md](CHANGELOG.md).
