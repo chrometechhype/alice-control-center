@@ -62,6 +62,7 @@ interface AudioState {
 const sample = computed(() => store.lastSample);
 const info = computed(() => store.info);
 const visual = computed(() => detectDeviceVisual(store.info));
+const heroTitle = computed(() => (isConnected.value ? visual.value.label : 'Колонка не подключена'));
 const history = computed(() => store.metrics);
 const ledAvailable = computed(() => Boolean(store.capabilities?.led.available));
 const recentEvents = computed(() => store.events.slice(0, 8));
@@ -235,45 +236,17 @@ onMounted(() => {
         <h1>Обзор</h1>
         <p>Живое состояние колонки, метрики и быстрые действия. Данные приходят с backend по WebSocket.</p>
       </div>
-      <div class="page-head__actions">
-        <button class="btn" :disabled="probeBusy || !isConnected" @click="refresh">
-          <RefreshCw :size="15" :class="{ spin: probeBusy }" />
-          Обновить
-        </button>
-        <RouterLink to="/setup" class="btn btn--primary">
-          <ShieldCheck :size="15" />
-          Мастер подключения
-        </RouterLink>
-      </div>
     </div>
 
     <section class="hero">
       <div class="hero-main">
-        <span class="hero-eyebrow">
-          <span class="dot" :class="{ 'dot--live': isConnected }" />
-          {{ isConnected ? 'Алиса на связи' : 'Соединение не установлено' }}
-        </span>
-        <h2>{{ isConnected ? 'Алиса' : 'Колонка не подключена' }}</h2>
-        <div v-if="isConnected" class="hero-model">
-          <span>{{ visual.label }}</span>
-          <span v-if="info?.modelRaw" class="hero-model__raw">{{ info.modelRaw.replace(/\0/g, '').trim() }}</span>
+        <h2>{{ heroTitle }}</h2>
+        <div v-if="isConnected && info?.modelRaw" class="hero-model">
+          <span class="hero-model__raw">{{ info.modelRaw.replace(/\0/g, '').trim() }}</span>
         </div>
-        <p class="hero-desc">
-          <template v-if="isConnected && info">
-            {{ visual.tagline }}. {{ info.os }} · ядро {{ info.kernel }}. Панель работает локально, пароль SSH
-            остаётся на backend.
-          </template>
-          <template v-else>
-            {{ store.status.lastError || 'Укажите адрес SSH и пароль в мастере подключения. Backend по умолчанию слушает только 127.0.0.1.' }}
-          </template>
+        <p v-if="!isConnected" class="hero-desc">
+          {{ store.status.lastError || 'Укажите адрес SSH и пароль в мастере подключения. Backend по умолчанию слушает только 127.0.0.1.' }}
         </p>
-        <div class="hero-chips">
-          <span v-if="info" class="pill pill--primary">Quasar {{ info.firmware || '—' }}</span>
-          <span v-if="info" class="pill">{{ info.arch }}</span>
-          <span v-if="info?.ip" class="pill">{{ info.ip }}</span>
-          <span v-if="sample" class="pill">Uptime {{ formatUptime(sample.uptimeSec ?? info?.uptimeSec) }}</span>
-          <span v-if="sample?.wifiRssi != null" class="pill">Wi-Fi {{ formatRssi(sample.wifiRssi) }}</span>
-        </div>
         <div class="hero-actions">
           <button v-if="isConnected" class="btn btn--soft" :disabled="probeBusy" @click="refresh">
             <RefreshCw :size="15" :class="{ spin: probeBusy }" />
@@ -291,10 +264,6 @@ onMounted(() => {
       </div>
       <div class="hero-art">
         <DevicePortrait :info="info" size="lg" :muted="!isConnected" />
-        <div class="hero-art-caption">
-          <strong>{{ isConnected ? visual.label : 'Ожидание станции' }}</strong>
-          <span>{{ isConnected ? 'образ определён автоматически' : 'подключитесь, чтобы определить модель' }}</span>
-        </div>
       </div>
     </section>
 

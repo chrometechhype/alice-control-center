@@ -2,6 +2,8 @@
 import { computed, onMounted, ref } from 'vue';
 import { ArrowUpCircle, LoaderCircle, Sparkles, X } from '@lucide/vue';
 import ConfirmDialog from './ConfirmDialog.vue';
+import UpdateNotes from './UpdateNotes.vue';
+import { formatBytes } from '@/lib/format';
 import {
   dismissUpdate,
   installUpdate,
@@ -22,7 +24,12 @@ const visible = computed(
 );
 
 const latest = computed(() => updateStore.info?.latestVersion ?? '');
-const notes = computed(() => updateStore.info?.notes?.trim() || 'Список изменений появится в релизе на GitHub.');
+const summary = computed(() => {
+  const [first, second] = updateStore.info?.highlights ?? [];
+  if (!first) return 'Описание релиза — в диалоге установки.';
+  return second ? `${first} Также: ${second}` : first;
+});
+const sizeLabel = computed(() => formatBytes(updateStore.info?.assetSizeBytes));
 
 function closeForNow(): void {
   hidden.value = true;
@@ -51,20 +58,12 @@ onMounted(() => {
   <div v-else-if="visible" class="update-banner">
     <span class="update-banner__icon"><ArrowUpCircle :size="19" /></span>
     <div class="update-banner__text">
-      <strong>Доступно обновление {{ latest }}</strong>
-      <span>Сейчас установлена {{ updateStore.info?.currentVersion }}. Обновление скачается с GitHub и проверится по SHA-256.</span>
+      <strong>{{ latest }} — доступно обновление</strong>
+      <span>{{ summary }}</span>
     </div>
-    <button type="button" class="btn btn--soft btn--sm" @click="confirmOpen = true">
+    <button type="button" class="btn btn--primary btn--sm" :disabled="updateStore.installing || !updateStore.info?.canInstall" @click="confirmOpen = true">
       <Sparkles :size="14" />
-      Что нового
-    </button>
-    <button
-      type="button"
-      class="btn btn--primary btn--sm"
-      :disabled="updateStore.installing || !updateStore.info?.canInstall"
-      @click="confirmOpen = true"
-    >
-      Установить
+      Установить · {{ sizeLabel }}
     </button>
     <button type="button" class="btn btn--ghost btn--icon btn--sm" title="Скрыть до следующего релиза" @click="closeForNow">
       <X :size="14" />
@@ -77,22 +76,14 @@ onMounted(() => {
 
   <ConfirmDialog
     :open="confirmOpen"
-    title="Установить обновление?"
-    :message="`Панель обновится до ${latest} и перезапустится. Настройки, история и бэкапы в data/ сохранятся. Перед установкой архив проверяется по SHA-256.`"
+    :title="`Установить ${latest}?`"
+    message="Панель перезапустится. Настройки, история и бэкапы в data/ останутся на месте, а архив мы проверим по SHA-256 перед установкой."
     confirm-label="Скачать и установить"
     :danger="false"
     :busy="updateStore.installing"
     @cancel="confirmOpen = false"
     @confirm="confirmInstall"
   >
-    <div class="update-release">
-      <div class="update-release__head">
-        <strong>Что нового в {{ latest }}</strong>
-        <a v-if="updateStore.info?.releaseUrl" :href="updateStore.info.releaseUrl" target="_blank" rel="noopener noreferrer">
-          Открыть релиз
-        </a>
-      </div>
-      <pre class="update-release__notes">{{ notes }}</pre>
-    </div>
+    <UpdateNotes />
   </ConfirmDialog>
 </template>

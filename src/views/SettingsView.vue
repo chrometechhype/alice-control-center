@@ -13,6 +13,7 @@ import {
   KeyRound,
   LoaderCircle,
   LogOut,
+  Mic,
   Monitor,
   Moon,
   Palette,
@@ -22,7 +23,6 @@ import {
   Settings,
   ShieldCheck,
   Smartphone,
-  Sparkles,
   Sun,
   Wand2,
   Wifi,
@@ -31,6 +31,7 @@ import type { AiProviderId, AppSettings, PublicAiSettings, PublicConnectionConfi
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import DevicePortrait from '@/components/DevicePortrait.vue';
 import SocialLinks from '@/components/SocialLinks.vue';
+import UpdateNotes from '@/components/UpdateNotes.vue';
 import {
   detectDeviceVisual,
   LITE2_COLORS,
@@ -40,6 +41,7 @@ import {
   type Lite2Color,
 } from '@/lib/deviceVisual';
 import { api, errorMessage } from '@/lib/api';
+import { formatBytes } from '@/lib/format';
 import {
   isConnected,
   logout,
@@ -49,10 +51,28 @@ import {
   updateSettings,
 } from '@/lib/store';
 import { openWelcome } from '@/lib/welcome';
-import { installUpdate, loadUpdates, updateStore } from '@/lib/updates';
+import { installUpdate, loadUpdates, releaseDateLabel, updateStore } from '@/lib/updates';
 
 interface ConnectionInfo {
   config: PublicConnectionConfig | null;
+}
+
+interface PhoneAddress {
+  address: string;
+  interface: string;
+  netmask: string;
+  kind: 'wifi' | 'ethernet' | 'other';
+  reachesStation: boolean;
+}
+
+interface PhoneAccess {
+  port: number;
+  lanAccess: boolean;
+  listeningOn: string;
+  stationHost: string | null;
+  addresses: PhoneAddress[];
+  best: string | null;
+  firewall: { supported: boolean; ruleExists: boolean; category: string | null; detail: string };
 }
 
 const saving = ref(false);
@@ -69,6 +89,53 @@ const qr = ref<{ dataUrl: string | null; url: string | null } | null>(null);
 const qrLoading = ref(false);
 const qrError = ref('');
 
+const phone = ref<PhoneAccess | null>(null);
+const phoneLoading = ref(false);
+const phoneError = ref('');
+const chosenAddress = ref('');
+const firewallBusy = ref(false);
+const firewallConfirm = ref(false);
+
+const panelUrl = computed(() => {
+  const address = chosenAddress.value || phone.value?.best;
+  return address ? `http://${address}:${phone.value?.port ?? 8722}/` : '';
+});
+
+async function loadPhoneAccess(): Promise<void> {
+  if (phoneLoading.value) return;
+  phoneLoading.value = true;
+  phoneError.value = '';
+  try {
+    const result = await api.get<PhoneAccess>('/settings/phone-access', 20_000);
+    phone.value = result;
+    if (!chosenAddress.value) chosenAddress.value = result.best ?? '';
+  } catch (caught) {
+    phoneError.value = errorMessage(caught);
+  } finally {
+    phoneLoading.value = false;
+  }
+}
+
+async function chooseAddress(address: string): Promise<void> {
+  chosenAddress.value = address;
+  qr.value = null;
+  await loadQr();
+}
+
+async function applyFirewallRule(): Promise<void> {
+  firewallConfirm.value = false;
+  firewallBusy.value = true;
+  try {
+    const result = await api.post<PhoneAccess['firewall']>('/settings/firewall', {}, 130_000);
+    if (phone.value) phone.value = { ...phone.value, firewall: result };
+    pushToast(result.ruleExists ? 'ok' : 'info', result.ruleExists ? 'Правило брандмауэра создано' : 'Правило не появилось — подтвердите запрос UAC');
+  } catch (caught) {
+    pushToast('error', errorMessage(caught));
+  } finally {
+    firewallBusy.value = false;
+  }
+}
+
 const lanTarget = ref<boolean | null>(null);
 const rotateOpen = ref(false);
 const rotating = ref(false);
@@ -81,12 +148,16 @@ const aiError = ref('');
 const aiProvider = ref<AiProviderId>('custom');
 const aiBaseUrl = ref('');
 const aiModel = ref('');
+const aiTtsModel = ref('');
+const aiTtsVoice = ref('');
 const aiApiKey = ref('');
 const aiTestReply = ref('');
+const speaking = ref(false);
 const aiPreset = computed(() => ai.value?.presets.find((item) => item.id === aiProvider.value) ?? null);
 const aiKeyRequired = computed(() => Boolean(aiPreset.value?.requiresKey) && !ai.value?.hasKey);
 
 const updateConfirm = ref(false);
+const releaseDate = computed(releaseDateLabel);
 const updateCheckedLabel = computed(() => {
   const ts = updateStore.info?.checkedAt;
   return ts ? new Date(ts).toLocaleString('ru-RU') : 'ещё не проверялось';
@@ -97,7 +168,7 @@ async function checkUpdates(): Promise<void> {
   if (updateStore.error) pushToast('error', updateStore.error);
   else if (updateStore.info?.checkError) pushToast('error', updateStore.info.checkError);
   else if (updateStore.info?.updateAvailable) pushToast('info', `Доступна версия ${updateStore.info.latestVersion}`);
-  else pushToast('ok', 'Установлена актуальная версия');
+  else pushToast('ok', `Установлена актуальная версия (${updateStore.info?.currentVersion ?? '—'})`);
 }
 
 async function applyUpdate(): Promise<void> {
@@ -134,6 +205,8 @@ async function loadAiSettings(): Promise<void> {
     aiProvider.value = result.provider;
     aiBaseUrl.value = result.baseUrl;
     aiModel.value = result.model;
+    aiTtsModel.value = result.ttsModel;
+    aiTtsVoice.value = result.ttsVoice;
   } catch (caught) {
     aiError.value = errorMessage(caught);
   } finally {
@@ -147,6 +220,8 @@ function chooseAiProvider(id: AiProviderId): void {
   if (preset) {
     aiBaseUrl.value = preset.baseUrl;
     aiModel.value = preset.model;
+    if (preset.ttsModel) aiTtsModel.value = preset.ttsModel;
+    if (preset.ttsVoice) aiTtsVoice.value = preset.ttsVoice;
   }
   aiApiKey.value = '';
   aiTestReply.value = '';
@@ -163,12 +238,16 @@ async function saveAi(): Promise<void> {
       baseUrl: aiBaseUrl.value.trim(),
       model: aiModel.value.trim(),
       ...(aiApiKey.value.trim() ? { apiKey: aiApiKey.value.trim() } : {}),
+      ...(aiTtsModel.value.trim() ? { ttsModel: aiTtsModel.value.trim() } : {}),
+      ...(aiTtsVoice.value.trim() ? { ttsVoice: aiTtsVoice.value.trim() } : {}),
     };
     const result = await api.put<PublicAiSettings>('/settings/ai', body);
     ai.value = result;
     aiProvider.value = result.provider;
     aiBaseUrl.value = result.baseUrl;
     aiModel.value = result.model;
+    aiTtsModel.value = result.ttsModel;
+    aiTtsVoice.value = result.ttsVoice;
     aiApiKey.value = '';
     aiTestReply.value = '';
     pushToast('ok', 'Настройки ИИ сохранены');
@@ -198,6 +277,21 @@ async function testAi(): Promise<void> {
     pushToast('error', aiError.value);
   } finally {
     aiTesting.value = false;
+  }
+}
+
+async function testSpeech(): Promise<void> {
+  if (speaking.value) return;
+  speaking.value = true;
+  aiError.value = '';
+  try {
+    const result = await api.post<{ player: string }>('/audio/say', { text: 'Проверка озвучки. Панель на связи.' }, 60_000);
+    pushToast('ok', `Колонка играет через ${result.player}`);
+  } catch (caught) {
+    aiError.value = errorMessage(caught);
+    pushToast('error', aiError.value);
+  } finally {
+    speaking.value = false;
   }
 }
 
@@ -325,6 +419,16 @@ async function copyToken(): Promise<void> {
   }
 }
 
+async function copyPanelUrl(): Promise<void> {
+  if (!panelUrl.value) return;
+  try {
+    await navigator.clipboard.writeText(panelUrl.value);
+    pushToast('ok', 'Адрес панели скопирован');
+  } catch {
+    pushToast('error', 'Буфер обмена недоступен — скопируйте адрес вручную');
+  }
+}
+
 async function loadQr(): Promise<void> {
   if (qrLoading.value) return;
   if (qr.value) {
@@ -334,7 +438,12 @@ async function loadQr(): Promise<void> {
   qrLoading.value = true;
   qrError.value = '';
   try {
-    qr.value = await api.get<{ dataUrl: string | null; url: string | null }>('/settings/lan-qr');
+    const query = chosenAddress.value
+      ? `?address=${encodeURIComponent(chosenAddress.value)}`
+      : phone.value?.stationHost
+        ? `?station=${encodeURIComponent(phone.value.stationHost)}`
+        : '';
+    qr.value = await api.get<{ dataUrl: string | null; url: string | null }>(`/settings/lan-qr${query}`);
     if (!qr.value.dataUrl) {
       qrError.value = 'Не найден сетевой IPv4-адрес компьютера.';
     }
@@ -367,6 +476,7 @@ async function signOut(): Promise<void> {
 onMounted(() => {
   void (async () => {
     await Promise.allSettled([refreshSettings(), loadConnectionInfo(), loadAiSettings(), loadUpdates(false)]);
+    if (store.settings?.lanAccess) void loadPhoneAccess();
   })();
 });
 </script>
@@ -396,6 +506,243 @@ onMounted(() => {
 
     <div class="split">
       <div class="stack">
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <div class="card-title"><Server :size="15" /> Подключение к станции</div>
+              <div class="card-sub">Пароль и ключи не отображаются в интерфейсе</div>
+            </div>
+            <span class="pill" :class="isConnected ? 'pill--ok' : 'pill--muted'">
+              {{ isConnected ? 'подключено' : 'нет связи' }}
+            </span>
+          </div>
+
+          <div v-if="connLoading" class="empty" style="padding: 24px">
+            <LoaderCircle :size="18" class="spin" />
+            <p>Читаем параметры подключения…</p>
+          </div>
+
+          <div v-else-if="conn" class="kv">
+            <div class="kv-row"><span class="kv-key">Хост</span><span class="kv-value mono">{{ conn.host }}</span></div>
+            <div class="kv-row"><span class="kv-key">Порт</span><span class="kv-value mono">{{ conn.port }}</span></div>
+            <div class="kv-row"><span class="kv-key">Пользователь</span><span class="kv-value mono">{{ conn.username }}</span></div>
+            <div class="kv-row"><span class="kv-key">Транспорт</span><span class="kv-value mono">{{ conn.transport }}</span></div>
+            <div class="kv-row">
+              <span class="kv-key">Пароль</span>
+              <span class="kv-value">{{ conn.hasPassword ? 'сохранён на backend' : 'не задан' }}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">SSH-ключ</span>
+              <span class="kv-value mono">{{ conn.privateKeyPath || 'не используется' }}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Автопереподключение</span>
+              <span class="kv-value">{{ conn.autoReconnect ? 'включено' : 'выключено' }}</span>
+            </div>
+          </div>
+
+          <div v-else class="alert alert--warn">
+            <AlertTriangle :size="15" />
+            <div>Параметры подключения ещё не сохранены. Откройте мастер подключения.</div>
+          </div>
+
+          <div class="toolbar mt-12">
+            <RouterLink to="/setup" class="btn btn--primary">
+              <KeyRound :size="15" />
+              Изменить подключение
+            </RouterLink>
+            <button class="btn" :disabled="connLoading" @click="loadConnectionInfo">
+              <RefreshCw :size="15" :class="{ spin: connLoading }" />
+              Обновить
+            </button>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <div class="card-title"><Wifi :size="15" /> Доступ с телефона</div>
+              <div class="card-sub">По умолчанию backend слушает только 127.0.0.1</div>
+            </div>
+            <span class="pill" :class="lanEnabled ? 'pill--warn' : 'pill--muted'">
+              {{ lanEnabled ? 'LAN включён' : 'только localhost' }}
+            </span>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-row__text">
+              <strong>Разрешить доступ по локальной сети</strong>
+              <span>
+                Включается явно. После включения все запросы требуют токен доступа; backend начнёт
+                слушать сетевой адрес после перезапуска.
+              </span>
+            </div>
+            <div class="setting-row__control">
+              <button
+                type="button"
+                class="switch"
+                :class="{ on: lanEnabled }"
+                :disabled="saving || !settings"
+                aria-label="Переключить LAN-доступ"
+                @click="askLan(!lanEnabled)"
+              />
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-row__text">
+              <strong>Токен доступа</strong>
+              <span>Показывается только на компьютере, где запущен backend.</span>
+            </div>
+            <div class="setting-row__control">
+              <span class="code-inline" style="min-width: 118px; text-align: center">
+                {{ tokenVisible && token ? token : token ? '••••••••••••' : 'не загружен' }}
+              </span>
+              <button
+                class="btn btn--ghost btn--icon btn--sm"
+                :title="tokenVisible ? 'Скрыть токен' : 'Показать токен'"
+                :disabled="tokenLoading"
+                @click="toggleToken"
+              >
+                <LoaderCircle v-if="tokenLoading" :size="14" class="spin" />
+                <EyeOff v-else-if="tokenVisible" :size="14" />
+                <Eye v-else :size="14" />
+              </button>
+              <button class="btn btn--ghost btn--icon btn--sm" title="Скопировать токен" @click="copyToken">
+                <Copy :size="14" />
+              </button>
+              <button class="btn btn--ghost btn--icon btn--sm" title="Перевыпустить токен" @click="rotateOpen = true">
+                <RefreshCw :size="14" />
+              </button>
+            </div>
+          </div>
+
+          <div v-if="tokenError" class="alert alert--warn mt-8">
+            <AlertTriangle :size="15" />
+            <div>{{ tokenError }} Токен можно посмотреть только на компьютере с backend.</div>
+          </div>
+
+          <template v-if="lanEnabled">
+            <div class="row mt-12">
+              <button class="btn btn--soft btn--sm" :disabled="phoneLoading" @click="loadPhoneAccess">
+                <LoaderCircle v-if="phoneLoading" :size="14" class="spin" />
+                <Smartphone v-else :size="14" />
+                Проверить сеть для телефона
+              </button>
+              <span class="spacer" />
+              <span v-if="phone" class="pill" :class="phone.listeningOn === '0.0.0.0' ? 'pill--ok' : 'pill--warn'">
+                {{ phone.listeningOn === '0.0.0.0' ? 'слушает сеть' : 'слушает только 127.0.0.1' }}
+              </span>
+            </div>
+
+            <div v-if="phoneError" class="alert alert--warn mt-8">
+              <AlertTriangle :size="15" />
+              <div>{{ phoneError }}</div>
+            </div>
+
+            <div v-if="phone && !phone.addresses.length" class="alert alert--warn mt-8">
+              <AlertTriangle :size="15" />
+              <div>
+                У компьютера нет адреса в обычной локальной /24-сети. Проверьте, что Wi-Fi подключён и
+                адаптер не в режим «общедоступная сеть по VPN».
+              </div>
+            </div>
+
+            <div v-if="phone?.addresses.length" class="kv mt-12">
+              <div
+                v-for="entry in phone.addresses"
+                :key="entry.address"
+                class="kv-row"
+                :class="{ 'kv-row--active': entry.address === (chosenAddress || phone.best) }"
+              >
+                <span class="kv-key">
+                  {{ entry.interface }}
+                  <span v-if="entry.reachesStation" class="pill pill--ok" style="margin-left: 6px">сеть колонки</span>
+                </span>
+                <button
+                  type="button"
+                  class="kv-value mono kv-link"
+                  :title="`Показать QR для ${entry.address}`"
+                  @click="chooseAddress(entry.address)"
+                >
+                  http://{{ entry.address }}:{{ phone.port }}/
+                </button>
+              </div>
+            </div>
+
+            <div v-if="phone?.firewall.supported && !phone.firewall.ruleExists" class="alert alert--warn mt-8">
+              <ShieldCheck :size="15" />
+              <div>
+                Брандмауэр Windows скорее всего блокирует входящие подключения к порту
+                {{ phone.port }}{{ phone.firewall.category ? ` (сеть помечена как «${phone.firewall.category}»)` : '' }}.
+                Без разрешения телефон откроет адрес, но страница останется грузиться вечно.
+              </div>
+            </div>
+
+            <div class="toolbar mt-8">
+              <button
+                v-if="phone?.firewall.supported && !phone.firewall.ruleExists"
+                class="btn"
+                :disabled="firewallBusy"
+                @click="firewallConfirm = true"
+              >
+                <LoaderCircle v-if="firewallBusy" :size="15" class="spin" />
+                <ShieldCheck v-else :size="15" />
+                Разрешить порт в брандмауэре
+              </button>
+              <span v-else-if="phone?.firewall.ruleExists" class="muted" style="font-size: 11.5px">
+                Правило брандмауэра для порта {{ phone.port }} уже создано.
+              </span>
+              <button class="btn btn--ghost btn--sm" :disabled="!panelUrl" @click="copyPanelUrl">
+                <Copy :size="14" />
+                Скопировать адрес
+              </button>
+            </div>
+
+            <div class="alert alert--info mt-12">
+              <Info :size="15" />
+              <div>
+                <strong>Если Wi-Fi раздаёт сам телефон.</strong> Телефон, ноутбук и колонка сидят в одной сети
+                телефона, поэтому адрес берите из списка выше — тот, что помечен «сеть колонки». На телефоне
+                откройте его в браузере и введите токен. Роутер при этом не нужен, интернет на телефоне может
+                быть мобильным. Не включайте на телефоне «изолированный режим» — он запрещает устройствам
+                видеть друг друга.
+              </div>
+            </div>
+          </template>
+
+          <div class="toolbar mt-12">
+            <button class="btn btn--soft" :disabled="qrLoading" @click="loadQr">
+              <LoaderCircle v-if="qrLoading" :size="15" class="spin" />
+              <QrCode v-else :size="15" />
+              {{ qr ? 'Скрыть QR-код' : 'Показать QR-код' }}
+            </button>
+            <span class="muted" style="font-size: 11.5px">QR открывает панель, но токен всё равно нужно ввести.</span>
+          </div>
+
+          <div v-if="qrError" class="alert alert--warn mt-8">
+            <AlertTriangle :size="15" />
+            <div>{{ qrError }}</div>
+          </div>
+
+          <div v-if="qr?.dataUrl" class="mt-12" style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap">
+            <img :src="qr.dataUrl" alt="QR-код для доступа с телефона" style="width: 180px; height: 180px; border-radius: 14px; border: 1px solid var(--line); background: #fff; padding: 8px" />
+            <div class="stack" style="gap: 6px">
+              <span class="section-title">Адрес для телефона</span>
+              <span class="code-inline">{{ qr.url }}</span>
+              <span class="muted" style="font-size: 11.5px">Телефон должен быть в той же Wi-Fi-сети, что и компьютер.</span>
+            </div>
+          </div>
+
+          <div class="alert alert--warn mt-12">
+            <Smartphone :size="15" />
+            <div>
+              Не публикуйте порт backend в интернет и не включайте проброс. LAN-доступ предназначен
+              только для доверенной домашней сети.
+            </div>
+          </div>
+        </article>
+
         <article class="card">
           <div class="card-head">
             <div>
@@ -482,128 +829,6 @@ onMounted(() => {
         <article class="card">
           <div class="card-head">
             <div>
-              <div class="card-title"><Wand2 :size="15" /> ИИ-генератор</div>
-              <div class="card-sub">Fun Lab использует выбранный OpenAI-совместимый сервер</div>
-            </div>
-            <span class="pill" :class="ai?.configured ? 'pill--ok' : 'pill--muted'">
-              {{ ai?.configured ? 'готов' : 'не настроен' }}
-            </span>
-          </div>
-
-          <div v-if="aiLoading" class="muted mt-12" style="font-size: 12px">
-            <LoaderCircle :size="13" class="spin" /> Читаем настройки…
-          </div>
-
-          <div v-else class="form-grid mt-12">
-            <div class="row-wrap" style="gap: 12px">
-              <label class="field" style="flex: 1; min-width: 220px">
-                <span class="field-label">Провайдер</span>
-                <select class="select" :value="aiProvider" :disabled="aiSaving" @change="onAiProviderChange">
-                  <option v-for="preset in ai?.presets ?? []" :key="preset.id" :value="preset.id">
-                    {{ preset.label }}
-                  </option>
-                </select>
-              </label>
-              <label class="field" style="flex: 1.4; min-width: 240px">
-                <span class="field-label">Base URL</span>
-                <input
-                  v-model="aiBaseUrl"
-                  class="input"
-                  type="url"
-                  spellcheck="false"
-                  placeholder="https://api.example.com/v1"
-                  :disabled="aiSaving"
-                />
-              </label>
-            </div>
-
-            <label class="field">
-              <span class="field-label">Модель</span>
-              <input
-                v-model="aiModel"
-                class="input"
-                type="text"
-                spellcheck="false"
-                placeholder="gpt-4o-mini"
-                :disabled="aiSaving"
-              />
-            </label>
-
-            <label class="field">
-              <span class="field-label">API-ключ</span>
-              <input
-                v-model="aiApiKey"
-                class="input"
-                type="password"
-                autocomplete="off"
-                :placeholder="
-                  ai?.hasKey
-                    ? 'Ключ сохранён — оставьте поле пустым'
-                    : aiPreset?.requiresKey
-                      ? 'Обязателен для этого провайдера'
-                      : 'Необязательно'
-                "
-                :disabled="aiSaving"
-              />
-            </label>
-
-            <p v-if="aiPreset?.note" class="field-hint">{{ aiPreset.note }}</p>
-            <p class="field-hint">
-              Ключ хранится только в <span class="mono">data/config.json</span> на backend и никогда
-              не отдаётся во frontend. Подходит любой сервер с endpoint
-              <span class="mono">/chat/completions</span>.
-            </p>
-
-            <div v-if="aiError" class="alert alert--error">
-              <AlertTriangle :size="15" />
-              <div>{{ aiError }}</div>
-            </div>
-            <div v-if="aiTestReply" class="alert alert--info">
-              <Check :size="15" />
-              <div>ИИ отвечает: {{ aiTestReply }}</div>
-            </div>
-            <div v-if="aiKeyRequired" class="alert alert--warn">
-              <AlertTriangle :size="15" />
-              <div>Для выбранного провайдера нужен API-ключ. Сохраните настройки вместе с ключом.</div>
-            </div>
-
-            <div class="row-wrap" style="gap: 10px">
-              <button
-                type="button"
-                class="btn btn--primary"
-                :disabled="aiSaving || !aiBaseUrl.trim() || !aiModel.trim()"
-                @click="saveAi"
-              >
-                <LoaderCircle v-if="aiSaving" :size="15" class="spin" />
-                <Check v-else :size="15" />
-                Сохранить
-              </button>
-              <button
-                type="button"
-                class="btn btn--soft"
-                :disabled="aiTesting || !ai?.configured"
-                @click="testAi"
-              >
-                <LoaderCircle v-if="aiTesting" :size="15" class="spin" />
-                <Wand2 v-else :size="15" />
-                {{ aiTesting ? 'Проверяем…' : 'Проверить' }}
-              </button>
-              <button
-                v-if="ai?.hasKey"
-                type="button"
-                class="btn btn--ghost btn--sm"
-                :disabled="aiSaving"
-                @click="clearAiKey"
-              >
-                Удалить ключ
-              </button>
-            </div>
-          </div>
-        </article>
-
-        <article class="card">
-          <div class="card-head">
-            <div>
               <div class="card-title"><Palette :size="15" /> Образ станции</div>
               <div class="card-sub">Как ваша колонка выглядит в панели</div>
             </div>
@@ -682,191 +907,164 @@ onMounted(() => {
         <article class="card">
           <div class="card-head">
             <div>
-              <div class="card-title"><Wifi :size="15" /> Доступ с телефона</div>
-              <div class="card-sub">По умолчанию backend слушает только 127.0.0.1</div>
+              <div class="card-title"><Wand2 :size="15" /> ИИ-генератор</div>
+              <div class="card-sub">Fun Lab и озвучка текста используют выбранный OpenAI-совместимый сервер</div>
             </div>
-            <span class="pill" :class="lanEnabled ? 'pill--warn' : 'pill--muted'">
-              {{ lanEnabled ? 'LAN включён' : 'только localhost' }}
+            <span class="pill" :class="ai?.configured ? 'pill--ok' : 'pill--muted'">
+              {{ ai?.configured ? 'готов' : 'не настроен' }}
             </span>
           </div>
 
-          <div class="setting-row">
-            <div class="setting-row__text">
-              <strong>Разрешить доступ по локальной сети</strong>
-              <span>
-                Включается явно. После включения все запросы требуют токен доступа; backend начнёт
-                слушать сетевой адрес после перезапуска.
-              </span>
+          <div v-if="aiLoading" class="muted mt-12" style="font-size: 12px">
+            <LoaderCircle :size="13" class="spin" /> Читаем настройки…
+          </div>
+
+          <div v-else class="form-grid mt-12">
+            <div class="row-wrap" style="gap: 12px">
+              <label class="field" style="flex: 1; min-width: 220px">
+                <span class="field-label">Провайдер</span>
+                <select class="select" :value="aiProvider" :disabled="aiSaving" @change="onAiProviderChange">
+                  <option v-for="preset in ai?.presets ?? []" :key="preset.id" :value="preset.id">
+                    {{ preset.label }}
+                  </option>
+                </select>
+              </label>
+              <label class="field" style="flex: 1.4; min-width: 240px">
+                <span class="field-label">Base URL</span>
+                <input
+                  v-model="aiBaseUrl"
+                  class="input"
+                  type="url"
+                  spellcheck="false"
+                  placeholder="https://api.example.com/v1"
+                  :disabled="aiSaving"
+                />
+              </label>
             </div>
-            <div class="setting-row__control">
+
+            <label class="field">
+              <span class="field-label">Модель</span>
+              <input
+                v-model="aiModel"
+                class="input"
+                type="text"
+                spellcheck="false"
+                placeholder="gpt-4o-mini"
+                :disabled="aiSaving"
+              />
+            </label>
+
+            <div class="row-wrap" style="gap: 12px">
+              <label class="field" style="flex: 1; min-width: 180px">
+                <span class="field-label">Модель озвучки</span>
+                <input
+                  v-model="aiTtsModel"
+                  class="input"
+                  type="text"
+                  spellcheck="false"
+                  placeholder="tts-1"
+                  :disabled="aiSaving"
+                />
+              </label>
+              <label class="field" style="flex: 1; min-width: 180px">
+                <span class="field-label">Голос</span>
+                <input
+                  v-model="aiTtsVoice"
+                  class="input"
+                  type="text"
+                  spellcheck="false"
+                  placeholder="alloy"
+                  :disabled="aiSaving"
+                />
+              </label>
+            </div>
+
+            <label class="field">
+              <span class="field-label">API-ключ</span>
+              <input
+                v-model="aiApiKey"
+                class="input"
+                type="password"
+                autocomplete="off"
+                :placeholder="
+                  ai?.hasKey
+                    ? 'Ключ сохранён — оставьте поле пустым'
+                    : aiPreset?.requiresKey
+                      ? 'Обязателен для этого провайдера'
+                      : 'Необязательно'
+                "
+                :disabled="aiSaving"
+              />
+            </label>
+
+            <p v-if="aiPreset?.note" class="field-hint">{{ aiPreset.note }}</p>
+            <p class="field-hint">
+              Ключ хранится только в <span class="mono">data/config.json</span> на backend и никогда
+              не отдаётся во frontend. Подходит любой сервер с endpoint
+              <span class="mono">/chat/completions</span>. Озвучка использует
+              <span class="mono">/audio/speech</span> — если его нет, кнопка проверки честно об этом скажет.
+            </p>
+
+            <div v-if="aiError" class="alert alert--error">
+              <AlertTriangle :size="15" />
+              <div>{{ aiError }}</div>
+            </div>
+            <div v-if="aiTestReply" class="alert alert--info">
+              <Check :size="15" />
+              <div>ИИ отвечает: {{ aiTestReply }}</div>
+            </div>
+            <div v-if="aiKeyRequired" class="alert alert--warn">
+              <AlertTriangle :size="15" />
+              <div>Для выбранного провайдера нужен API-ключ. Сохраните настройки вместе с ключом.</div>
+            </div>
+
+            <div class="row-wrap" style="gap: 10px">
               <button
                 type="button"
-                class="switch"
-                :class="{ on: lanEnabled }"
-                :disabled="saving || !settings"
-                aria-label="Переключить LAN-доступ"
-                @click="askLan(!lanEnabled)"
-              />
-            </div>
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-row__text">
-              <strong>Сетевые адреса</strong>
-              <span class="mono">{{ settings?.lanAddresses?.join(', ') || 'не определены' }}</span>
-            </div>
-            <span class="pill pill--muted">IPv4</span>
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-row__text">
-              <strong>Токен доступа</strong>
-              <span>Показывается только на компьютере, где запущен backend.</span>
-            </div>
-            <div class="setting-row__control">
-              <span class="code-inline" style="min-width: 118px; text-align: center">
-                {{ tokenVisible && token ? token : token ? '••••••••••••' : 'не загружен' }}
-              </span>
-              <button
-                class="btn btn--ghost btn--icon btn--sm"
-                :title="tokenVisible ? 'Скрыть токен' : 'Показать токен'"
-                :disabled="tokenLoading"
-                @click="toggleToken"
+                class="btn btn--primary"
+                :disabled="aiSaving || !aiBaseUrl.trim() || !aiModel.trim()"
+                @click="saveAi"
               >
-                <LoaderCircle v-if="tokenLoading" :size="14" class="spin" />
-                <EyeOff v-else-if="tokenVisible" :size="14" />
-                <Eye v-else :size="14" />
+                <LoaderCircle v-if="aiSaving" :size="15" class="spin" />
+                <Check v-else :size="15" />
+                Сохранить
               </button>
-              <button class="btn btn--ghost btn--icon btn--sm" title="Скопировать токен" @click="copyToken">
-                <Copy :size="14" />
+              <button
+                type="button"
+                class="btn btn--soft"
+                :disabled="aiTesting || !ai?.configured"
+                @click="testAi"
+              >
+                <LoaderCircle v-if="aiTesting" :size="15" class="spin" />
+                <Wand2 v-else :size="15" />
+                {{ aiTesting ? 'Проверяем…' : 'Проверить' }}
               </button>
-              <button class="btn btn--ghost btn--icon btn--sm" title="Перевыпустить токен" @click="rotateOpen = true">
-                <RefreshCw :size="14" />
+              <button
+                type="button"
+                class="btn btn--soft"
+                :disabled="speaking || !ai?.configured || !isConnected"
+                :title="isConnected ? 'Колонка произнесёт пробу и тут же удалит файл' : 'Нужно подключение к станции'"
+                @click="testSpeech"
+              >
+                <LoaderCircle v-if="speaking" :size="15" class="spin" />
+                <Mic v-else :size="15" />
+                {{ speaking ? 'Озвучиваем…' : 'Проверить озвучку' }}
+              </button>
+              <button
+                v-if="ai?.hasKey"
+                type="button"
+                class="btn btn--ghost btn--sm"
+                :disabled="aiSaving"
+                @click="clearAiKey"
+              >
+                Удалить ключ
               </button>
             </div>
-          </div>
-
-          <div v-if="tokenError" class="alert alert--warn mt-8">
-            <AlertTriangle :size="15" />
-            <div>{{ tokenError }} Токен можно посмотреть только на компьютере с backend.</div>
-          </div>
-
-          <div class="toolbar mt-12">
-            <button class="btn btn--soft" :disabled="qrLoading" @click="loadQr">
-              <LoaderCircle v-if="qrLoading" :size="15" class="spin" />
-              <QrCode v-else :size="15" />
-              {{ qr ? 'Скрыть QR-код' : 'Показать QR-код' }}
-            </button>
-            <span class="muted" style="font-size: 11.5px">QR открывает панель, но токен всё равно нужно ввести.</span>
-          </div>
-
-          <div v-if="qrError" class="alert alert--warn mt-8">
-            <AlertTriangle :size="15" />
-            <div>{{ qrError }}</div>
-          </div>
-
-          <div v-if="qr?.dataUrl" class="mt-12" style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap">
-            <img :src="qr.dataUrl" alt="QR-код для доступа с телефона" style="width: 180px; height: 180px; border-radius: 14px; border: 1px solid var(--line); background: #fff; padding: 8px" />
-            <div class="stack" style="gap: 6px">
-              <span class="section-title">Адрес для телефона</span>
-              <span class="code-inline">{{ qr.url }}</span>
-              <span class="muted" style="font-size: 11.5px">Телефон должен быть в той же Wi-Fi-сети, что и компьютер.</span>
-            </div>
-          </div>
-
-          <div class="alert alert--info mt-12">
-            <Smartphone :size="15" />
-            <div>
-              Не публикуйте порт backend в интернет и не включайте проброс. LAN-доступ предназначен
-              только для доверенной домашней сети.
-            </div>
-          </div>
-        </article>
-
-        <article class="card">
-          <div class="card-head">
-            <div>
-              <div class="card-title"><Server :size="15" /> Подключение к станции</div>
-              <div class="card-sub">Пароль и ключи не отображаются в интерфейсе</div>
-            </div>
-            <span class="pill" :class="isConnected ? 'pill--ok' : 'pill--muted'">
-              {{ isConnected ? 'подключено' : 'нет связи' }}
-            </span>
-          </div>
-
-          <div v-if="connLoading" class="empty" style="padding: 24px">
-            <LoaderCircle :size="18" class="spin" />
-            <p>Читаем параметры подключения…</p>
-          </div>
-
-          <div v-else-if="conn" class="kv">
-            <div class="kv-row"><span class="kv-key">Хост</span><span class="kv-value mono">{{ conn.host }}</span></div>
-            <div class="kv-row"><span class="kv-key">Порт</span><span class="kv-value mono">{{ conn.port }}</span></div>
-            <div class="kv-row"><span class="kv-key">Пользователь</span><span class="kv-value mono">{{ conn.username }}</span></div>
-            <div class="kv-row"><span class="kv-key">Транспорт</span><span class="kv-value mono">{{ conn.transport }}</span></div>
-            <div class="kv-row">
-              <span class="kv-key">Пароль</span>
-              <span class="kv-value">{{ conn.hasPassword ? 'сохранён на backend' : 'не задан' }}</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">SSH-ключ</span>
-              <span class="kv-value mono">{{ conn.privateKeyPath || 'не используется' }}</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Автопереподключение</span>
-              <span class="kv-value">{{ conn.autoReconnect ? 'включено' : 'выключено' }}</span>
-            </div>
-          </div>
-
-          <div v-else class="alert alert--warn">
-            <AlertTriangle :size="15" />
-            <div>Параметры подключения ещё не сохранены. Откройте мастер подключения.</div>
-          </div>
-
-          <div class="toolbar mt-12">
-            <RouterLink to="/setup" class="btn btn--primary">
-              <KeyRound :size="15" />
-              Изменить подключение
-            </RouterLink>
-            <button class="btn" :disabled="connLoading" @click="loadConnectionInfo">
-              <RefreshCw :size="15" :class="{ spin: connLoading }" />
-              Обновить
-            </button>
           </div>
         </article>
       </div>
 
       <aside class="stack">
-        <article class="card card--soft">
-          <div class="card-title"><ShieldCheck :size="15" /> Безопасность</div>
-          <ul class="check-list mt-12">
-            <li><Check :size="14" /><span>По умолчанию backend слушает только 127.0.0.1.</span></li>
-            <li><Check :size="14" /><span>LAN-доступ включается явно и требует авторизацию.</span></li>
-            <li><Check :size="14" /><span>Пароли не хранятся в исходниках и не отдаются фронтенду.</span></li>
-            <li><Check :size="14" /><span>Приватные ключи не копируются в проект.</span></li>
-            <li><Check :size="14" /><span>Все опасные операции требуют подтверждения.</span></li>
-          </ul>
-          <div class="alert alert--warn mt-12">
-            <Info :size="15" />
-            <div>Не публикуйте root-доступ, SSH или ADB в открытый интернет.</div>
-          </div>
-        </article>
-
-        <article class="card">
-          <div class="card-title"><Settings :size="15" /> Сессия</div>
-          <div class="kv mt-12">
-            <div class="kv-row"><span class="kv-key">Режим</span><span class="kv-value">{{ store.auth.required ? 'LAN + токен' : 'локальный' }}</span></div>
-            <div class="kv-row"><span class="kv-key">Токен задан</span><span class="kv-value">{{ settings?.lanTokenSet ? 'да' : 'нет' }}</span></div>
-            <div class="kv-row"><span class="kv-key">WebSocket</span><span class="kv-value">{{ store.wsState }}</span></div>
-            <div class="kv-row"><span class="kv-key">Адрес панели</span><span class="kv-value mono">{{ panelHost }}</span></div>
-          </div>
-          <button v-if="store.auth.required" class="btn btn--danger w-full mt-12" @click="signOut">
-            <LogOut :size="15" />
-            Выйти из панели
-          </button>
-          <p v-else class="field-hint mt-8">Локальная сессия не требует токена. При включении LAN появится вход по токену.</p>
-        </article>
-
         <article class="card">
           <div class="card-head">
             <div>
@@ -898,11 +1096,18 @@ onMounted(() => {
           <div class="kv mt-12">
             <div class="kv-row">
               <span class="kv-key">Установлено</span>
-              <span class="kv-value mono">{{ updateStore.info?.currentVersion ?? '0.2.0' }}</span>
+              <span class="kv-value mono">{{ updateStore.info?.currentVersion ?? '—' }}</span>
             </div>
             <div class="kv-row">
               <span class="kv-key">Последняя</span>
-              <span class="kv-value mono">{{ updateStore.info?.latestVersion ?? '—' }}</span>
+              <span class="kv-value mono">
+                {{ updateStore.info?.latestVersion ?? '—' }}
+                <span v-if="updateStore.info?.publishedAt" class="muted">· {{ releaseDate }}</span>
+              </span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Размер архива</span>
+              <span class="kv-value mono">{{ formatBytes(updateStore.info?.assetSizeBytes) }}</span>
             </div>
             <div class="kv-row">
               <span class="kv-key">Проверено</span>
@@ -925,13 +1130,7 @@ onMounted(() => {
             <LoaderCircle :size="15" class="spin" />
             <div>{{ updateStore.progress }}</div>
           </div>
-          <div v-else-if="updateStore.info?.updateAvailable" class="alert alert--info mt-12">
-            <Sparkles :size="15" />
-            <div>
-              Доступна версия {{ updateStore.info.latestVersion }}. Обновление скачается с GitHub,
-              проверится по SHA-256 и установится с резервной копией текущих файлов.
-            </div>
-          </div>
+          <UpdateNotes v-else-if="updateStore.info?.updateAvailable" class="mt-12" />
           <div v-else-if="updateStore.info?.checkError" class="alert alert--warn mt-12">
             <AlertTriangle :size="15" />
             <div>{{ updateStore.info.checkError }}</div>
@@ -957,20 +1156,37 @@ onMounted(() => {
               <Download v-else :size="15" />
               Установить {{ updateStore.info.latestVersion }}
             </button>
-            <a
-              v-if="updateStore.info?.releaseUrl"
-              class="btn btn--ghost"
-              :href="updateStore.info.releaseUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Что нового
-            </a>
           </div>
-          <p class="field-hint">
-            Перед установкой создаётся резервная копия файлов панели в data/updates. Настройки,
-            история, бэкапы и сцены не затрагиваются.
-          </p>
+        </article>
+
+        <article class="card">
+          <div class="card-title"><Settings :size="15" /> Сессия</div>
+          <div class="kv mt-12">
+            <div class="kv-row"><span class="kv-key">Режим</span><span class="kv-value">{{ store.auth.required ? 'LAN + токен' : 'локальный' }}</span></div>
+            <div class="kv-row"><span class="kv-key">Токен задан</span><span class="kv-value">{{ settings?.lanTokenSet ? 'да' : 'нет' }}</span></div>
+            <div class="kv-row"><span class="kv-key">WebSocket</span><span class="kv-value">{{ store.wsState }}</span></div>
+            <div class="kv-row"><span class="kv-key">Адрес панели</span><span class="kv-value mono">{{ panelHost }}</span></div>
+          </div>
+          <button v-if="store.auth.required" class="btn btn--danger w-full mt-12" @click="signOut">
+            <LogOut :size="15" />
+            Выйти из панели
+          </button>
+          <p v-else class="field-hint mt-8">Локальная сессия не требует токена. При включении LAN появится вход по токену.</p>
+        </article>
+
+        <article class="card card--soft">
+          <div class="card-title"><ShieldCheck :size="15" /> Безопасность</div>
+          <ul class="check-list mt-12">
+            <li><Check :size="14" /><span>По умолчанию backend слушает только 127.0.0.1.</span></li>
+            <li><Check :size="14" /><span>LAN-доступ включается явно и требует авторизацию.</span></li>
+            <li><Check :size="14" /><span>Пароли не хранятся в исходниках и не отдаются фронтенду.</span></li>
+            <li><Check :size="14" /><span>Приватные ключи не копируются в проект.</span></li>
+            <li><Check :size="14" /><span>Все опасные операции требуют подтверждения.</span></li>
+          </ul>
+          <div class="alert alert--warn mt-12">
+            <Info :size="15" />
+            <div>Не публикуйте root-доступ, SSH или ADB в открытый интернет.</div>
+          </div>
         </article>
 
         <article class="card">
@@ -978,7 +1194,7 @@ onMounted(() => {
           <div class="kv mt-12">
             <div class="kv-row">
               <span class="kv-key">Версия</span>
-              <span class="kv-value mono">{{ updateStore.info?.currentVersion ?? '0.2.0' }}</span>
+              <span class="kv-value mono">{{ updateStore.info?.currentVersion ?? '—' }}</span>
             </div>
             <div class="kv-row"><span class="kv-key">Frontend</span><span class="kv-value">Vue 3 + Vite</span></div>
             <div class="kv-row"><span class="kv-key">Backend</span><span class="kv-value">Node.js + Express</span></div>
@@ -1022,6 +1238,17 @@ onMounted(() => {
     />
 
     <ConfirmDialog
+      :open="firewallConfirm"
+      title="Разрешить порт в брандмауэре?"
+      :message="`Windows покажет запрос повышения прав и добавит входящее правило для TCP-порта ${phone?.port ?? 8722} только для частной сети. Сетевой профиль «общедоступный» правило не затрагивает.`"
+      confirm-label="Вызвать запрос UAC"
+      :danger="false"
+      :busy="firewallBusy"
+      @confirm="applyFirewallRule"
+      @cancel="firewallConfirm = false"
+    />
+
+    <ConfirmDialog
       :open="updateConfirm"
       title="Установить обновление?"
       :message="`Панель обновится до ${updateStore.info?.latestVersion ?? ''} и перезапустится. Файлы в data/ сохранятся. Архив будет проверен по SHA-256.`"
@@ -1031,7 +1258,7 @@ onMounted(() => {
       @confirm="applyUpdate"
       @cancel="updateConfirm = false"
     >
-      <pre class="update-release__notes">{{ updateStore.info?.notes?.trim() || 'Список изменений появится в релизе на GitHub.' }}</pre>
+      <UpdateNotes />
     </ConfirmDialog>
   </div>
 </template>

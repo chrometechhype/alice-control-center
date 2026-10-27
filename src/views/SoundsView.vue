@@ -8,12 +8,14 @@ import {
   Download,
   Info,
   LoaderCircle,
+  Mic,
   Package,
   Pause,
   Play,
   RefreshCw,
   Search,
   Upload,
+  Volume2,
 } from '@lucide/vue';
 import type { BackupManifest, SoundFile, SoundListing } from '@shared/types';
 import EmptyState from '@/components/EmptyState.vue';
@@ -29,6 +31,15 @@ const category = ref('all');
 const query = ref('');
 const playing = ref<string | null>(null);
 const audioRef = ref<HTMLAudioElement | null>(null);
+
+const players = ref<string[] | null>(null);
+const stationBusy = ref<string | null>(null);
+const speechText = ref('');
+const speaking = ref(false);
+const speechError = ref('');
+
+const canPlayOnStation = computed(() => (players.value?.length ?? 0) > 0);
+const speechLimit = 300;
 
 const replaceTarget = ref<SoundFile | null>(null);
 const replaceFile = ref<File | null>(null);
@@ -111,6 +122,44 @@ async function togglePlay(file: SoundFile): Promise<void> {
   } catch {
     playing.value = null;
     pushToast('error', 'Не удалось воспроизвести файл в браузере');
+  }
+}
+
+async function loadPlayers(): Promise<void> {
+  try {
+    const result = await api.get<{ players: string[] }>('/audio/players', 15_000);
+    players.value = result.players;
+  } catch {
+    players.value = [];
+  }
+}
+
+async function playOnStation(file: SoundFile): Promise<void> {
+  if (stationBusy.value) return;
+  stationBusy.value = file.path;
+  try {
+    const result = await api.post<{ player: string }>('/audio/play', { path: file.path }, 20_000);
+    pushToast('ok', `Играем на станции через ${result.player}`);
+  } catch (caught) {
+    pushToast('error', errorMessage(caught));
+  } finally {
+    stationBusy.value = null;
+  }
+}
+
+async function sayOnStation(): Promise<void> {
+  const text = speechText.value.trim();
+  if (!text || speaking.value) return;
+  speaking.value = true;
+  speechError.value = '';
+  try {
+    const result = await api.post<{ player: string }>('/audio/say', { text }, 90_000);
+    speechText.value = '';
+    pushToast('ok', `Колонка говорит через ${result.player}. Файл удалён со станции сразу после воспроизведения.`);
+  } catch (caught) {
+    speechError.value = errorMessage(caught);
+  } finally {
+    speaking.value = false;
   }
 }
 
@@ -209,7 +258,10 @@ async function createPack(): Promise<void> {
 }
 
 onMounted(() => {
-  if (isConnected.value) void load();
+  if (isConnected.value) {
+    void load();
+    void loadPlayers();
+  }
 });
 </script>
 
@@ -310,6 +362,22 @@ onMounted(() => {
                 <button
                   type="button"
                   class="btn btn--ghost btn--icon btn--sm"
+                  :disabled="!canPlayOnStation || Boolean(stationBusy)"
+                  :title="
+                    stationBusy === file.path
+                      ? 'Запускаем…'
+                      : canPlayOnStation
+                        ? 'Играть на станции — файл не сохраняется в библиотеку'
+                        : 'На станции нет доступного плеера'
+                  "
+                  @click="playOnStation(file)"
+                >
+                  <LoaderCircle v-if="stationBusy === file.path" :size="14" class="spin" />
+                  <Volume2 v-else :size="14" />
+                </button>
+                <button
+                  type="button"
+                  class="btn btn--ghost btn--icon btn--sm"
                   title="Скачать"
                   @click="triggerDownload(soundUrl(file.path, true))"
                 >
@@ -359,6 +427,49 @@ onMounted(() => {
                 <span class="mono">{{ item.count }}</span>
               </button>
             </div>
+          </article>
+
+          <article class="card card--soft">
+            <div class="card-head">
+              <div class="card-title"><Mic :size="15" /> Озвучка</div>
+              <span class="pill" :class="canPlayOnStation ? 'pill--ok' : 'pill--muted'">
+                {{ players === null ? 'проверяем' : canPlayOnStation ? players.join(' · ') : 'нет плеера' }}
+              </span>
+            </div>
+            <div class="field mt-12">
+              <label for="speech-text">Что произнести колонке</label>
+              <textarea
+                id="speech-text"
+                v-model="speechText"
+                class="textarea"
+                rows="3"
+                :maxlength="speechLimit"
+                :disabled="speaking || !canPlayOnStation"
+                placeholder="Например: загрузка завершена"
+              />
+              <span class="field-hint">
+                {{ speechText.trim().length }}/{{ speechLimit }} · Модель и голос — в «Настройки» → «ИИ-генератор».
+                Звук играется один раз и не попадает в библиотеку станции.
+              </span>
+            </div>
+            <div v-if="speechError" class="alert alert--error">
+              <AlertTriangle :size="15" />
+              <div>{{ speechError }}</div>
+            </div>
+            <div v-else-if="players && !players.length" class="alert alert--warn">
+              <AlertTriangle :size="15" />
+              <div>На станции нет ни одного из плееров (aplay, paplay, ffplay, mpv, gstreamer), поэтому озвучка недоступна.</div>
+            </div>
+            <button
+              type="button"
+              class="btn btn--primary mt-12 w-full"
+              :disabled="speaking || !speechText.trim() || !canPlayOnStation"
+              @click="sayOnStation"
+            >
+              <LoaderCircle v-if="speaking" :size="15" class="spin" />
+              <Mic v-else :size="15" />
+              {{ speaking ? 'Озвучиваем…' : 'Сказать на колонке' }}
+            </button>
           </article>
 
           <article class="card card--soft">

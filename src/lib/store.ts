@@ -58,6 +58,8 @@ let initStarted = false;
 let unauthorizedHandlerAttached = false;
 let snapshotInFlight = false;
 let systemThemeBound = false;
+let wsFailures = 0;
+let wakeBound = false;
 
 const THEME_META: Record<'light' | 'dark', string> = {
   light: '#fffaf7',
@@ -271,16 +273,8 @@ function handleWsMessage(raw: string): void {
       const status = message.data as ConnectionStatus;
       const wasConnected = store.status.state === 'connected';
       store.status = status;
-      if (status.state !== 'connected') {
-        store.lastSample = null;
-      }
       if (status.state === 'connected' && (!wasConnected || !store.info)) {
         void loadSnapshot().catch(() => undefined);
-      }
-      if (status.state === 'disconnected' || status.state === 'error') {
-        store.info = null;
-        store.capabilities = null;
-        store.metrics = [];
       }
       break;
     }
@@ -326,6 +320,7 @@ export function connectWs(): void {
   socket = next;
   next.addEventListener('open', () => {
     store.wsState = 'online';
+    wsFailures = 0;
   });
   next.addEventListener('message', (event) => {
     if (typeof event.data === 'string') handleWsMessage(event.data);
@@ -334,14 +329,36 @@ export function connectWs(): void {
     if (socket === next) socket = null;
     store.wsState = 'offline';
     if (store.auth.authenticated && store.booted) {
+      // A fixed 4-second retry hammered the backend every time the laptop slept or the
+      // phone hotspot dropped; back off to 30 seconds and recover instantly when the tab
+      // becomes visible again.
+      const delay = Math.min(30_000, 1000 * 2 ** wsFailures) + Math.random() * 400;
+      wsFailures += 1;
       reconnectTimer = window.setTimeout(() => {
         reconnectTimer = null;
         connectWs();
-      }, 4000);
+      }, delay);
     }
   });
   next.addEventListener('error', () => {
     next.close();
+  });
+}
+
+function bindWakeRecovery(): void {
+  if (wakeBound || typeof document === 'undefined') return;
+  wakeBound = true;
+  const revive = (): void => {
+    if (document.visibilityState !== 'visible') return;
+    wsFailures = 0;
+    connectWs();
+    void loadSnapshot().catch(() => undefined);
+  };
+  document.addEventListener('visibilitychange', revive);
+  window.addEventListener('online', revive);
+  window.addEventListener('focus', () => {
+    if (store.wsState === 'online') return;
+    revive();
   });
 }
 
@@ -381,6 +398,7 @@ function startPolling(): void {
   pollTimer = window.setInterval(() => {
     if (!store.auth.authenticated) return;
     if (store.wsState === 'online') return;
+    connectWs();
     void loadSnapshot().catch(() => undefined);
     void refreshMetrics().catch(() => undefined);
   }, 25_000);
@@ -390,6 +408,7 @@ export async function initStore(): Promise<void> {
   if (initStarted) return;
   initStarted = true;
   initTheme();
+  bindWakeRecovery();
   if (!unauthorizedHandlerAttached) {
     unauthorizedHandlerAttached = true;
     window.addEventListener('acc:unauthorized', () => void handleUnauthorized());

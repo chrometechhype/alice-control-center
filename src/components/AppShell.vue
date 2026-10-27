@@ -62,8 +62,9 @@ const navGroups: NavGroup[] = [
   {
     label: 'Обзор',
     items: [
-      { to: '/', label: 'Обзор', icon: LayoutDashboard },
+      { to: '/', label: 'Обзор станции', icon: LayoutDashboard },
       { to: '/system', label: 'Системный монитор', icon: Server },
+      { to: '/events', label: 'События', icon: ScrollText },
     ],
   },
   {
@@ -71,6 +72,7 @@ const navGroups: NavGroup[] = [
     items: [
       { to: '/sounds', label: 'Sound Studio', icon: AudioLines },
       { to: '/led', label: 'LED Studio', icon: Lightbulb },
+      { to: '/fun', label: 'Fun Lab', icon: FlaskConical },
       { to: '/bluetooth', label: 'Bluetooth', icon: Bluetooth },
     ],
   },
@@ -84,12 +86,10 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    label: 'Система',
+    label: 'Панель',
     items: [
-      { to: '/events', label: 'Event Center', icon: ScrollText },
-      { to: '/plugins', label: 'Плагины и YAM', icon: Puzzle },
-      { to: '/fun', label: 'Fun Lab', icon: FlaskConical },
       { to: '/settings', label: 'Настройки', icon: Settings },
+      { to: '/plugins', label: 'Плагины и YAM', icon: Puzzle },
     ],
   },
 ];
@@ -145,9 +145,9 @@ async function refresh(): Promise<void> {
     <aside class="sidebar" :class="{ open: sidebarOpen }">
       <RouterLink to="/" class="brand" style="text-decoration: none; color: inherit">
         <div class="brand-mark"><AudioLines :size="20" /></div>
-        <div>
-          <div class="brand-name">Alice Control</div>
-          <div class="brand-sub">Station Center</div>
+        <div style="min-width: 0">
+          <div class="brand-name">Alice Control Center</div>
+          <div class="brand-sub">Панель станции · v{{ appVersion }}</div>
         </div>
       </RouterLink>
 
@@ -205,7 +205,6 @@ async function refresh(): Promise<void> {
         </div>
         <div class="sidebar-social">
           <SocialLinks compact />
-          <span class="eyebrow">ACC {{ appVersion }}</span>
         </div>
       </div>
     </aside>
@@ -220,9 +219,6 @@ async function refresh(): Promise<void> {
         >
           <Menu :size="18" />
         </button>
-        <div class="topbar-title">
-          <strong>Alice Control Center</strong>
-        </div>
         <div class="topbar-spacer" />
         <div class="topbar-actions">
           <span class="pill topbar-ws" :class="wsTone" :title="`WebSocket: ${store.wsState}`">

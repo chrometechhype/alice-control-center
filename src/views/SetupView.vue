@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   AlertTriangle,
@@ -11,6 +11,7 @@ import {
   Lightbulb,
   LoaderCircle,
   Plug,
+  Radar,
   RefreshCw,
   Server,
   ShieldCheck,
@@ -43,6 +44,20 @@ interface ProbePayload {
   warnings: string[];
 }
 
+interface FoundHost {
+  ip: string;
+  port: number;
+  banner: string;
+  mac?: string;
+  name?: string;
+  source: 'mdns' | 'tcp' | 'arp';
+}
+
+interface DiscoverResult {
+  subnets: string[];
+  hosts: FoundHost[];
+}
+
 const router = useRouter();
 const step = ref(1);
 const tools = ref<ToolsResult | null>(null);
@@ -53,6 +68,9 @@ const probeVisual = computed(() => detectDeviceVisual(probe.value?.info));
 const busy = ref(false);
 const error = ref('');
 const showPassword = ref(false);
+const found = ref<DiscoverResult | null>(null);
+const finding = ref(false);
+const foundError = ref('');
 
 const form = reactive({
   host: '',
@@ -156,6 +174,25 @@ async function loadTools(): Promise<void> {
   }
 }
 
+async function discover(): Promise<void> {
+  finding.value = true;
+  foundError.value = '';
+  try {
+    found.value = await api.post<DiscoverResult>('/connection/discover', {}, 25_000);
+  } catch (caught) {
+    foundError.value = errorMessage(caught);
+  } finally {
+    finding.value = false;
+  }
+}
+
+function adopt(host: FoundHost): void {
+  form.host = host.ip;
+  form.port = host.port;
+  error.value = '';
+  pushToast('info', `Адрес ${host.ip}:${host.port} подставлен — введите пароль SSH`);
+}
+
 async function testConnection(): Promise<void> {
   error.value = '';
   if (!form.host.trim()) {
@@ -219,6 +256,10 @@ onMounted(() => {
     step.value = 4;
   }
   void loadTools();
+});
+
+watch(step, (value) => {
+  if (value === 2 && !form.host.trim() && !found.value && !finding.value) void discover();
 });
 </script>
 
@@ -314,7 +355,51 @@ onMounted(() => {
                 <div class="card-sub">Пароль уходит только на локальный backend и не появляется в frontend-сборке.</div>
               </div>
             </div>
-            <form class="stack" style="gap: 14px" @submit.prevent="testConnection">
+
+            <div class="discover">
+              <div class="row">
+                <button type="button" class="btn btn--soft btn--sm" :disabled="finding" @click="discover">
+                  <LoaderCircle v-if="finding" :size="14" class="spin" />
+                  <Radar v-else :size="14" />
+                  {{ finding ? 'Ищем колонку…' : 'Найти колонку в сети' }}
+                </button>
+                <span class="spacer" />
+                <span v-if="found && !finding" class="muted" style="font-size: 11.5px">
+                  {{ found.hosts.length ? `Найдено SSH-серверов: ${found.hosts.length}` : 'SSH-серверов не найдено' }}
+                  · {{ found.subnets.join(', ') }}
+                </span>
+              </div>
+              <div v-if="foundError" class="alert alert--warn mt-8">
+                <AlertTriangle :size="15" />
+                <div>{{ foundError }} Поиск доступен на том компьютере, где запущен backend.</div>
+              </div>
+              <div v-if="finding" class="empty" style="padding: 18px">
+                <LoaderCircle :size="18" class="spin" />
+                <p>Опрашиваем локальную сеть — обычно 3–7 секунд.</p>
+              </div>
+              <div v-else-if="found?.hosts.length" class="stack mt-8" style="gap: 8px">
+                <button
+                  v-for="host in found.hosts"
+                  :key="`${host.ip}:${host.port}`"
+                  type="button"
+                  class="list-row discover-row"
+                  :class="{ 'discover-row--active': form.host === host.ip && form.port === host.port }"
+                  @click="adopt(host)"
+                >
+                  <span class="event-level event-level--success"><Check :size="13" /></span>
+                  <div class="list-main">
+                    <div class="list-title mono">{{ host.ip }}:{{ host.port }}</div>
+                    <div class="list-meta">{{ host.banner }}{{ host.mac ? ` · ${host.mac}` : '' }}</div>
+                  </div>
+                  <span class="pill pill--muted">{{ host.source === 'mdns' ? 'mDNS' : 'порт открыт' }}</span>
+                </button>
+                <span class="field-hint">
+                  Нажмите на адрес — он подставится в форму. Точную модель панель назовёт после проверки пароля.
+                </span>
+              </div>
+            </div>
+
+            <form class="stack mt-12" style="gap: 14px" @submit.prevent="testConnection">
               <div class="form-grid">
                 <div class="field span-2">
                   <label for="setup-host">Адрес колонки</label>

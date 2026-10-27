@@ -25,6 +25,13 @@ export const updateStore = reactive({
 
 let inFlight: Promise<void> | null = null;
 
+export function releaseDateLabel(): string {
+  const iso = updateStore.info?.publishedAt;
+  if (!iso) return '';
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('ru-RU');
+}
+
 function dismissedVersion(): string {
   try {
     return globalThis.localStorage?.getItem(DISMISS_KEY) ?? '';

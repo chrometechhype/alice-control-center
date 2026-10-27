@@ -269,6 +269,8 @@
 
 .scene-card {
   appearance: none;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--line);
   background: var(--surface);
   border-radius: var(--radius);
@@ -294,16 +296,18 @@
 
 .scene-preview {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: center;
-  height: 84px;
+  height: 92px;
   color: #fff;
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
 }
 
 .scene-body {
   display: flex;
-  align-items: flex-start;
+  flex: 1;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 10px;
   padding: 12px 14px 14px;
@@ -314,18 +318,27 @@
   display: block;
   font-size: 13px;
   font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .scene-desc {
-  display: block;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  margin-top: 2px;
+  min-height: 46px;
   font-size: 11px;
   color: var(--muted);
   line-height: 1.4;
-  margin-top: 2px;
 }
 
 .scene-badge {
   flex: none;
+  align-self: flex-end;
   font-family: var(--font-mono);
   font-size: 9.5px;
   color: var(--muted);
@@ -558,4 +571,52 @@
   .event-row {
     padding: 10px 14px;
   }
+}
+
+.discover {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface-2);
+}
+
+.discover-row {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-1);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 10px 12px;
+}
+
+.discover-row--active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 22%, transparent);
+}
+
+.discover-row:hover {
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
+}
+
+.kv-row--active {
+  background: color-mix(in srgb, var(--primary) 9%, transparent);
+  border-radius: 10px;
+}
+
+.kv-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--primary);
+  cursor: pointer;
+  font: inherit;
+  text-align: right;
+}
+
+.kv-link:hover {
+  text-decoration: underline;
 }

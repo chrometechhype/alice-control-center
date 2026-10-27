@@ -100,8 +100,8 @@ function jsonInit(method: string, body: unknown): RequestInit {
 }
 
 export const api = {
-  get<T>(path: string): Promise<T> {
-    return request<T>(path);
+  get<T>(path: string, timeoutMs = 0): Promise<T> {
+    return request<T>(path, undefined, timeoutMs);
   },
   post<T>(path: string, body: unknown = {}, timeoutMs = 0): Promise<T> {
     return request<T>(path, jsonInit('POST', body), timeoutMs);
