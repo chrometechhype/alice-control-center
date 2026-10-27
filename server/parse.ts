@@ -257,6 +257,8 @@ export interface AmixerMaster {
   raw: number | null;
   max: number | null;
   muted: boolean | null;
+  /** Some stations ship Master as a pure volume control with no mute switch at all. */
+  hasSwitch: boolean;
 }
 
 export function parseAmixerMaster(text: string): AmixerMaster {
@@ -269,6 +271,7 @@ export function parseAmixerMaster(text: string): AmixerMaster {
     raw: raw ? Number(raw[1]) : null,
     max: max ? Number(max[1]) : null,
     muted,
+    hasSwitch: /Capabilities:.*pswitch/.test(text),
   };
 }
 

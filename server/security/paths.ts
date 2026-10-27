@@ -3,6 +3,8 @@ import type { FileRoot } from '../../shared/types.ts';
 import { AccError } from '../errors.ts';
 
 export const SOUNDS_ROOT = '/system/vendor/quasar/sounds';
+/** The panel's own library: uploads land here, and the user is allowed to delete them again. */
+export const USER_SOUNDS_ROOT = '/data/sounds';
 export const LED_PATTERNS_ROOT = '/system/vendor/quasar/ledpatterns';
 export const INTERNAL_TMP_ROOT = '/data/opt/acc-tmp';
 export const YAM_ROOT = '/data/quazar/yam';
@@ -70,6 +72,33 @@ export function assertSoundPath(input: unknown): string {
   const remotePath = normalizeRemotePath(input);
   if (!isWithin(SOUNDS_ROOT, remotePath) || remotePath === SOUNDS_ROOT) {
     throw new AccError('PATH_NOT_ALLOWED', 'Звук должен находиться в системном каталоге звуков', 403);
+  }
+  return remotePath;
+}
+
+/** Anything the station is allowed to play or preview: system sounds plus the panel's own library. */
+export function assertPlayableSoundPath(input: unknown): string {
+  const remotePath = normalizeRemotePath(input);
+  const insideLibrary = (root: string) => isWithin(root, remotePath) && remotePath !== root;
+  if (!insideLibrary(SOUNDS_ROOT) && !insideLibrary(USER_SOUNDS_ROOT)) {
+    throw new AccError(
+      'PATH_NOT_ALLOWED',
+      'Играть можно только звуки из системного каталога или из библиотеки панели',
+      403,
+    );
+  }
+  return remotePath;
+}
+
+/** A path inside the user library — the only place a sound may be deleted from. */
+export function assertUserSoundPath(input: unknown): string {
+  const remotePath = normalizeRemotePath(input);
+  if (!isWithin(USER_SOUNDS_ROOT, remotePath) || remotePath === USER_SOUNDS_ROOT) {
+    throw new AccError(
+      'SYSTEM_SOUND',
+      'Удалить можно только звук из библиотеки панели. Системный звук не удаляется — только заменяется.',
+      403,
+    );
   }
   return remotePath;
 }

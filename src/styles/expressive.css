@@ -390,6 +390,30 @@ body,
   gap: 6px;
 }
 
+/* ---------- Sidebar controls ---------- */
+
+.sidebar-controls {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  margin-top: -6px;
+  padding: 0 4px;
+}
+
+.sidebar-controls .pill {
+  font-size: 11.5px;
+}
+
+@media (min-width: 981px) {
+  .topbar {
+    display: none;
+  }
+
+  .sidebar-controls {
+    display: flex;
+  }
+}
+
 .page {
   padding: 16px 14px 48px;
   gap: 20px;

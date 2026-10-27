@@ -6,21 +6,26 @@ import {
   AudioLines,
   Check,
   Download,
+  HardDrive,
   Info,
   LoaderCircle,
   Mic,
   Package,
   Pause,
   Play,
+  Plus,
   RefreshCw,
   Search,
+  Trash2,
   Upload,
   Volume2,
 } from '@lucide/vue';
 import type { BackupManifest, SoundFile, SoundListing } from '@shared/types';
+import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import Modal from '@/components/Modal.vue';
-import { api, apiUrl, errorMessage, triggerDownload } from '@/lib/api';
+import VolumeControl from '@/components/VolumeControl.vue';
+import { ApiError, api, apiUrl, errorMessage, triggerDownload } from '@/lib/api';
 import { isConnected, pushToast, refreshBackups } from '@/lib/store';
 import { formatBytes, formatRelative } from '@/lib/format';
 
@@ -28,6 +33,7 @@ const listing = ref<SoundListing | null>(null);
 const loading = ref(false);
 const error = ref('');
 const category = ref('all');
+const originFilter = ref<'all' | 'system' | 'user'>('all');
 const query = ref('');
 const playing = ref<string | null>(null);
 const audioRef = ref<HTMLAudioElement | null>(null);
@@ -56,6 +62,34 @@ const packConfirm = ref(false);
 const packing = ref(false);
 const packError = ref('');
 
+const publishFile = ref<File | null>(null);
+const publishName = ref('');
+const publishing = ref(false);
+const publishError = ref('');
+const publishConflict = ref(false);
+
+const deleteTarget = ref<SoundFile | null>(null);
+const deleting = ref(false);
+
+/** The station only ships `aplay`, so a long clip may still be playing when the call returns. */
+interface StationPlayResult {
+  player: string;
+  seconds: number;
+  converted: boolean;
+  finished: boolean;
+}
+
+const libraryFiles = computed(() => (listing.value?.files ?? []).filter((file) => file.origin === 'user'));
+const userFreeBytes = computed(() => listing.value?.userFreeBytes ?? null);
+
+// A 1 МБ cushion is what the station needs for the decoded copy it makes in /tmp while playing.
+const publishFits = computed(() => {
+  const file = publishFile.value;
+  const free = userFreeBytes.value;
+  if (!file || free == null) return true;
+  return file.size + 1024 * 1024 <= free;
+});
+
 const categories = computed(() => {
   const map = new Map<string, { count: number; size: number }>();
   for (const file of listing.value?.files ?? []) {
@@ -72,9 +106,27 @@ const categories = computed(() => {
 
 const totalSize = computed(() => (listing.value?.files ?? []).reduce((sum, file) => sum + file.size, 0));
 
+const originOptions = computed(() => {
+  const files = listing.value?.files ?? [];
+  return [
+    { value: 'all' as const, label: 'Все', count: files.length },
+    { value: 'system' as const, label: 'Системные', count: files.filter((file) => file.origin === 'system').length },
+    { value: 'user' as const, label: 'Мои', count: files.filter((file) => file.origin === 'user').length },
+  ];
+});
+
+// Packs only ever copy the station's own sounds — the panel library is disposable by design.
+const packCategories = computed(() => {
+  const system = new Set(
+    (listing.value?.files ?? []).filter((file) => file.origin === 'system').map((file) => file.category),
+  );
+  return categories.value.filter((item) => system.has(item.name));
+});
+
 const filtered = computed(() => {
   const needle = query.value.trim().toLowerCase();
   return (listing.value?.files ?? []).filter((file) => {
+    if (originFilter.value !== 'all' && file.origin !== originFilter.value) return false;
     if (category.value !== 'all' && file.category !== category.value) return false;
     if (needle && !`${file.name} ${file.rel}`.toLowerCase().includes(needle)) return false;
     return true;
@@ -82,7 +134,7 @@ const filtered = computed(() => {
 });
 
 const packCount = computed(() => {
-  const files = listing.value?.files ?? [];
+  const files = (listing.value?.files ?? []).filter((file) => file.origin === 'system');
   if (packCategory.value === 'all') return files.length;
   return files.filter((file) => file.category === packCategory.value).length;
 });
@@ -138,12 +190,68 @@ async function playOnStation(file: SoundFile): Promise<void> {
   if (stationBusy.value) return;
   stationBusy.value = file.path;
   try {
-    const result = await api.post<{ player: string }>('/audio/play', { path: file.path }, 20_000);
-    pushToast('ok', `Играем на станции через ${result.player}`);
+    const result = await api.post<StationPlayResult>('/audio/play', { path: file.path }, 200_000);
+    const detail = [
+      `через ${result.player}`,
+      result.converted ? 'перекодировано в WAV 48 кГц' : null,
+      result.finished ? `${result.seconds.toFixed(1)} с` : 'всё ещё играет',
+    ].filter(Boolean).join(' · ');
+    pushToast('ok', `${file.name}: ${detail}`);
   } catch (caught) {
     pushToast('error', errorMessage(caught));
   } finally {
     stationBusy.value = null;
+  }
+}
+
+function onPublishPicked(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  publishFile.value = input.files?.[0] ?? null;
+  publishError.value = '';
+  publishConflict.value = false;
+  input.value = '';
+}
+
+async function publishSound(confirm = false): Promise<void> {
+  const file = publishFile.value;
+  if (!file) {
+    publishError.value = 'Сначала выберите аудиофайл';
+    return;
+  }
+  publishing.value = true;
+  publishError.value = '';
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    if (publishName.value.trim()) form.append('name', publishName.value.trim());
+    if (confirm) form.append('confirm', 'true');
+    const saved = await api.form<SoundFile>('/sounds/publish', form);
+    publishFile.value = null;
+    publishName.value = '';
+    publishConflict.value = false;
+    pushToast('ok', `Опубликовано в библиотеке: ${saved.name}`);
+    await load();
+  } catch (caught) {
+    publishConflict.value = caught instanceof ApiError && caught.code === 'ALREADY_PUBLISHED';
+    publishError.value = errorMessage(caught);
+  } finally {
+    publishing.value = false;
+  }
+}
+
+async function removeUserSound(): Promise<void> {
+  const target = deleteTarget.value;
+  if (!target) return;
+  deleting.value = true;
+  try {
+    await api.post('/sounds/delete', { path: target.path, confirm: true }, 30_000);
+    deleteTarget.value = null;
+    pushToast('ok', `Удалено из библиотеки: ${target.name}`);
+    await load();
+  } catch (caught) {
+    pushToast('error', errorMessage(caught));
+  } finally {
+    deleting.value = false;
   }
 }
 
@@ -153,9 +261,14 @@ async function sayOnStation(): Promise<void> {
   speaking.value = true;
   speechError.value = '';
   try {
-    const result = await api.post<{ player: string }>('/audio/say', { text }, 90_000);
+    const result = await api.post<StationPlayResult>('/audio/say', { text }, 200_000);
     speechText.value = '';
-    pushToast('ok', `Колонка говорит через ${result.player}. Файл удалён со станции сразу после воспроизведения.`);
+    pushToast(
+      'ok',
+      `Колонка говорит через ${result.player}`
+        + (result.converted ? ' (перекодировано в WAV 48 кГц)' : '')
+        + '. Файл удалён со станции сразу после воспроизведения.',
+    );
   } catch (caught) {
     speechError.value = errorMessage(caught);
   } finally {
@@ -227,8 +340,9 @@ async function submitReplace(): Promise<void> {
 }
 
 function openPack(): void {
-  packCategory.value = category.value;
-  packTitle.value = category.value === 'all' ? 'Все системные звуки' : `Звуки: ${category.value}`;
+  const isSystemCategory = packCategories.value.some((item) => item.name === category.value);
+  packCategory.value = isSystemCategory ? category.value : 'all';
+  packTitle.value = packCategory.value === 'all' ? 'Все системные звуки' : `Звуки: ${packCategory.value}`;
   packConfirm.value = false;
   packError.value = '';
   packDialog.value = true;
@@ -270,7 +384,13 @@ onMounted(() => {
     <div class="page-head">
       <div>
         <h1>Sound Studio</h1>
-        <p>Инвентаризация звуков в <span class="code-inline">/system/vendor/quasar/sounds</span>. Замена — только с бэкапом на компьютере и проверкой SHA-256.</p>
+        <p>
+          Звуки станции в <span class="code-inline">/system/vendor/quasar/sounds</span> и своя библиотека
+          в <span class="code-inline">/data/sounds</span>. Кнопка
+          <span class="code-inline"><Volume2 :size="12" style="vertical-align: -1px" /></span>
+          играет выбранное на колонке: панель сама перекодирует файл в WAV 48 кГц, потому что на станции
+          есть только <span class="code-inline">aplay</span>.
+        </p>
       </div>
       <div class="page-head__actions">
         <button class="btn" :disabled="loading || !isConnected" @click="load(true)">
@@ -296,11 +416,11 @@ onMounted(() => {
         <div>{{ error }}</div>
       </div>
 
-      <div class="grid grid-3">
+      <div class="grid grid-4">
         <div class="card stat">
           <div class="stat-top"><span class="stat-label">Файлов</span><AudioLines :size="15" class="muted" /></div>
           <div class="stat-value">{{ listing?.files.length ?? '—' }}</div>
-          <div class="stat-foot"><span>Форматы: opus, ogg, mp3</span><span class="mono">sounds</span></div>
+          <div class="stat-foot"><span>Своих: {{ libraryFiles.length }}</span><span class="mono">sounds</span></div>
         </div>
         <div class="card stat">
           <div class="stat-top"><span class="stat-label">Категорий</span><Package :size="15" class="muted" /></div>
@@ -312,6 +432,11 @@ onMounted(() => {
           <div class="stat-value" style="font-size: 24px">{{ formatBytes(totalSize) }}</div>
           <div class="stat-foot"><span>Прочитано с устройства</span><span class="mono">rw</span></div>
         </div>
+        <div class="card stat">
+          <div class="stat-top"><span class="stat-label">Свободно на /data</span><HardDrive :size="15" class="muted" /></div>
+          <div class="stat-value" style="font-size: 24px">{{ formatBytes(userFreeBytes) }}</div>
+          <div class="stat-foot"><span>Сюда пишется библиотека</span><span class="mono">df</span></div>
+        </div>
       </div>
 
       <div class="split">
@@ -320,6 +445,19 @@ onMounted(() => {
             <div class="search" style="flex: 1; min-width: 200px">
               <Search :size="14" />
               <input v-model="query" class="input" placeholder="Поиск по имени или пути…" />
+            </div>
+            <div class="segmented" role="group" aria-label="Источник звука">
+              <button
+                v-for="option in originOptions"
+                :key="option.value"
+                type="button"
+                class="seg"
+                :class="{ active: originFilter === option.value }"
+                @click="originFilter = option.value"
+              >
+                {{ option.label }}
+                <span class="mono">{{ option.count }}</span>
+              </button>
             </div>
             <span class="pill pill--muted">{{ filtered.length }} из {{ listing?.files.length ?? 0 }}</span>
           </div>
@@ -349,7 +487,10 @@ onMounted(() => {
                 <div class="list-main">
                   <div class="sound-name">{{ file.name }}</div>
                   <div class="sound-meta">
-                    <span class="pill pill--muted">{{ file.category }}</span>
+                    <span
+                      class="pill"
+                      :class="file.origin === 'user' ? 'pill--primary' : 'pill--muted'"
+                    >{{ file.origin === 'user' ? 'библиотека' : file.category }}</span>
                     <span>{{ file.ext.toUpperCase() }}</span>
                     <span>·</span>
                     <span>{{ formatBytes(file.size) }}</span>
@@ -384,12 +525,22 @@ onMounted(() => {
                   <Download :size="14" />
                 </button>
                 <button
+                  v-if="file.origin === 'system'"
                   type="button"
                   class="btn btn--ghost btn--icon btn--sm"
-                  title="Заменить с бэкапом"
+                  title="Заменить системный звук с бэкапом"
                   @click="openReplace(file)"
                 >
                   <Upload :size="14" />
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  class="btn btn--ghost btn--icon btn--sm"
+                  title="Удалить из библиотеки"
+                  @click="deleteTarget = file"
+                >
+                  <Trash2 :size="14" />
                 </button>
               </div>
             </div>
@@ -400,6 +551,78 @@ onMounted(() => {
         </article>
 
         <aside class="stack">
+          <article class="card">
+            <div class="card-head">
+              <div class="card-title"><Volume2 :size="15" /> Громкость станции</div>
+            </div>
+            <VolumeControl />
+          </article>
+
+          <article class="card card--soft">
+            <div class="card-head">
+              <div class="card-title"><Upload :size="15" /> Опубликовать звук</div>
+              <span class="pill pill--muted">{{ libraryFiles.length }} в библиотеке</span>
+            </div>
+            <p class="field-hint mt-8">
+              Файл ложится в <span class="code-inline">/data/sounds</span> и остаётся там, пока вы его не
+              удалите. Системные звуки станции удалить нельзя — их можно только заменить.
+            </p>
+            <div class="field mt-12">
+              <label for="publish-file">Аудиофайл</label>
+              <input
+                id="publish-file"
+                type="file"
+                class="input"
+                accept="audio/*,.mp3,.wav,.ogg,.opus,.flac,.m4a,.aac"
+                @change="onPublishPicked"
+              />
+              <span v-if="publishFile" class="field-hint">
+                {{ publishFile.name }} · {{ formatBytes(publishFile.size) }}
+              </span>
+            </div>
+            <div class="field mt-12">
+              <label for="publish-name">Имя на станции (необязательно)</label>
+              <input
+                id="publish-name"
+                v-model="publishName"
+                class="input"
+                maxlength="90"
+                :placeholder="publishFile ? publishFile.name : 'Как в файле'"
+                :disabled="publishing"
+              />
+              <span class="field-hint">
+                Свободно на /data: {{ formatBytes(userFreeBytes) }}
+                <template v-if="publishFile && !publishFits">
+                  · файл не поместится, освободите место
+                </template>
+              </span>
+            </div>
+            <div v-if="publishError" class="alert" :class="publishConflict ? 'alert--warn' : 'alert--error'">
+              <AlertTriangle :size="15" />
+              <div>{{ publishError }}</div>
+            </div>
+            <button
+              type="button"
+              class="btn btn--primary mt-12 w-full"
+              :disabled="publishing || !publishFile || !publishFits"
+              @click="publishSound(false)"
+            >
+              <LoaderCircle v-if="publishing" :size="15" class="spin" />
+              <Plus v-else :size="15" />
+              {{ publishing ? 'Записываем на станцию…' : 'Загрузить на станцию' }}
+            </button>
+            <button
+              v-if="publishConflict"
+              type="button"
+              class="btn mt-8 w-full"
+              :disabled="publishing"
+              @click="publishSound(true)"
+            >
+              <Upload :size="15" />
+              Заменить существующий
+            </button>
+          </article>
+
           <article class="card">
             <div class="card-head">
               <div class="card-title"><Package :size="15" /> Категории</div>
@@ -565,7 +788,7 @@ onMounted(() => {
           <label for="pack-category">Категория</label>
           <select id="pack-category" v-model="packCategory" class="select">
             <option value="all">Все звуки</option>
-            <option v-for="item in categories" :key="item.name" :value="item.name">
+            <option v-for="item in packCategories" :key="item.name" :value="item.name">
               {{ item.name }} ({{ item.count }})
             </option>
           </select>
@@ -597,5 +820,15 @@ onMounted(() => {
       </template>
     </Modal>
 
+    <ConfirmDialog
+      :open="Boolean(deleteTarget)"
+      title="Удалить из библиотеки"
+      :message="`Файл «${deleteTarget?.name ?? ''}» будет удалён со станции безвозвратно. Системные звуки станции эта операция не затрагивает.`"
+      confirm-label="Удалить"
+      :danger="true"
+      :busy="deleting"
+      @cancel="deleteTarget = null"
+      @confirm="removeUserSound"
+    />
   </div>
 </template>

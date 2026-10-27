@@ -8,6 +8,7 @@ import { shQuote } from '../util.ts';
 import type {
   AdapterDirEntry,
   AdapterStat,
+  AdapterStats,
   ExecOptions,
   ExecResult,
   StationAdapter,
@@ -17,6 +18,13 @@ const DEFAULT_TIMEOUT = 20_000;
 const DEFAULT_MAX_BYTES = 2_000_000;
 const MAX_CHANNELS = 3;
 const TRANSIENT_EXEC = /unable to exec|channel open failure|open failed|administratively prohibited|resource shortage/i;
+const SFTP_ABSENT = /exit code 127|subsystem request failed|no such file|not found/i;
+
+/**
+ * This dropbear runs no sftp-server: the subsystem request comes back as exit code 127. Probing it
+ * again after every reconnect buys nothing, so the answer is remembered per endpoint.
+ */
+const sftpAbsentEndpoints = new Set<string>();
 
 export class SshAdapter extends EventEmitter implements StationAdapter {
   readonly transport = 'ssh' as const;
@@ -28,9 +36,16 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
   private closeNotified = false;
   private activeChannels = 0;
   private channelWaiters: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
+  private readonly startedAt = Date.now();
+  private refusedOpens = 0;
+  private timedOutExecs = 0;
+  private retries = 0;
+  private readonly endpoint: string;
 
   constructor(private readonly config: DeviceConnectionConfig) {
     super();
+    this.endpoint = `${config.host}:${config.port ?? 22}`;
+    if (sftpAbsentEndpoints.has(this.endpoint)) this.sftpBroken = true;
   }
 
   isConnected(): boolean {
@@ -210,7 +225,10 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
         this.connected
       ) {
         await new Promise((resolve) => setTimeout(resolve, 250));
-        if (this.connected) return run();
+        if (this.connected) {
+          this.retries += 1;
+          return run();
+        }
       }
       throw error;
     }
@@ -254,6 +272,7 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
 
       const timer = setTimeout(() => {
         timedOut = true;
+        this.timedOutExecs += 1;
         finish(null);
         try {
           channel?.close();
@@ -265,10 +284,21 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
       let channel: ClientChannel | undefined;
       client.exec(command, (error, stream) => {
         if (error) {
+          this.refusedOpens += 1;
           clearTimeout(timer);
           if (!settled) {
             settled = true;
             reject(new AccError('SSH_EXEC_FAILED', error.message, 502));
+          }
+          return;
+        }
+        if (settled) {
+          // Таймер успел сработать до колбэка — этот канал никто бы не закрыл, и он остался
+          // висеть на сессии до самого разрыва.
+          try {
+            stream.close();
+          } catch {
+            // уже закрыт
           }
           return;
         }
@@ -296,6 +326,19 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
         });
       });
     });
+  }
+
+  getStats(): AdapterStats {
+    return {
+      activeChannels: this.activeChannels,
+      queuedWaiters: this.channelWaiters.length,
+      maxChannels: MAX_CHANNELS,
+      refusedOpens: this.refusedOpens,
+      timedOutExecs: this.timedOutExecs,
+      retries: this.retries,
+      sftpBroken: this.sftpBroken,
+      startedAt: this.startedAt,
+    };
   }
 
   async supportsSftp(): Promise<boolean> {
@@ -335,6 +378,7 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
         clearTimeout(timer);
         if (error) {
           this.sftpBroken = true;
+          if (SFTP_ABSENT.test(error.message)) sftpAbsentEndpoints.add(this.endpoint);
           reject(new AccError('SFTP_FAILED', `SFTP недоступен: ${error.message}`, 502));
           return;
         }
@@ -377,6 +421,7 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
         }
       };
       const timer = setTimeout(() => {
+        this.timedOutExecs += 1;
         finish(null);
         try {
           channel?.close();
@@ -387,10 +432,19 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
       let channel: ClientChannel | undefined;
       client.exec(command, (error, stream) => {
         if (error) {
+          this.refusedOpens += 1;
           if (!settled) {
             settled = true;
             clearTimeout(timer);
             reject(new AccError('SSH_EXEC_FAILED', error.message, 502));
+          }
+          return;
+        }
+        if (settled) {
+          try {
+            stream.close();
+          } catch {
+            // уже закрыт
           }
           return;
         }
@@ -426,6 +480,7 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
     return new Promise<void>((resolve, reject) => {
       client.exec(`cat > ${shQuote(remotePath)}`, (error, stream) => {
         if (error) {
+          this.refusedOpens += 1;
           reject(new AccError('WRITE_FAILED', error.message, 502));
           return;
         }
@@ -443,6 +498,7 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
         };
         timer = setTimeout(() => {
           if (settled) return;
+          this.timedOutExecs += 1;
           settled = true;
           try {
             stream.close();

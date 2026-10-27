@@ -5,22 +5,53 @@ import path from 'node:path';
 import { z } from 'zod';
 import type { SoundListing } from '../../shared/types.ts';
 import { createBackup } from '../backups.ts';
-import { connectionManager } from '../connection.ts';
-import { remoteFreeBytes, remoteSha256, writeDeviceFile } from '../deviceOps.ts';
+import { ACTION_READY_WAIT_MS, connectionManager } from '../connection.ts';
+import { removeDeviceFile, remoteFreeBytes, remoteSha256, writeDeviceFile } from '../deviceOps.ts';
 import { AccError } from '../errors.ts';
 import { eventLog } from '../events.ts';
 import { asyncRoute, sendOk } from '../http.ts';
 import { isSoundFile } from '../parse.ts';
-import { assertSoundPath, SOUNDS_ROOT } from '../security/paths.ts';
-import { looksLikeAudio, scanSounds, soundExt } from '../sounds.ts';
-import { formatBytes } from '../util.ts';
+import {
+  assertPlayableSoundPath,
+  assertSoundPath,
+  assertUserSoundPath,
+  SOUNDS_ROOT,
+  USER_SOUNDS_ROOT,
+} from '../security/paths.ts';
+import { looksLikeAudio, scanSounds, soundExt, toSoundFile } from '../sounds.ts';
+import { formatBytes, shQuote } from '../util.ts';
 
 export const soundsRouter = Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 12 * 1024 * 1024, files: 1 },
+  // Browsers put the Cyrillic filename on the wire as UTF-8; busboy's default latin1 read turns
+  // «проверка.mp3» into «Ð¿ÑÐ¾Ð²ÐµÑÐºÐ°.mp3» before we ever see it.
+  defParamCharset: 'utf8',
 });
+
+/**
+ * Library names end up inside a shell command, so anything outside letters, digits and a few safe
+ * separators is dropped rather than escaped — the name stays readable in the station's own browser.
+ */
+export function libraryFileName(input: string): string {
+  const base = path.posix.basename(input.trim());
+  const ext = soundExt(base);
+  if (!isSoundFile(base)) {
+    throw new AccError(
+      'FORMAT_MISMATCH',
+      'Библиотека принимает mp3, wav, ogg, opus, flac, m4a и aac',
+      415,
+    );
+  }
+  const stem = base.slice(0, base.length - ext.length - 1)
+    .replace(/[^\p{L}\p{N} _()\-]+/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!stem) throw new AccError('BAD_NAME', 'Имя файла получилось пустым', 400);
+  return `${stem.slice(0, 72)}.${ext}`;
+}
 
 const CONTENT_TYPES: Record<string, string> = {
   mp3: 'audio/mpeg',
@@ -35,17 +66,20 @@ const CONTENT_TYPES: Record<string, string> = {
 soundsRouter.get(
   '/',
   asyncRoute(async (_req, res) => {
-    const adapter = connectionManager.requireAdapter();
+    const adapter = await connectionManager.awaitReady();
     const listing: SoundListing = await scanSounds(adapter);
-    sendOk(res, listing);
+    // The library folder only appears after the first upload, so free space is measured one level
+    // up — /data is the partition that actually runs out.
+    const free = await remoteFreeBytes(adapter, path.posix.dirname(USER_SOUNDS_ROOT)).catch(() => null);
+    sendOk(res, { ...listing, userFreeBytes: free?.availableBytes ?? null });
   }),
 );
 
 soundsRouter.get(
   '/file',
   asyncRoute(async (req, res) => {
-    const remotePath = assertSoundPath(req.query.path);
-    const adapter = connectionManager.requireAdapter();
+    const remotePath = assertPlayableSoundPath(req.query.path);
+    const adapter = await connectionManager.awaitReady();
     const info = await adapter.stat(remotePath);
     if (!info.isFile) throw new AccError('NOT_A_FILE', 'Это не файл', 400);
     if (info.size > 24 * 1024 * 1024) {
@@ -84,7 +118,7 @@ soundsRouter.post(
       throw new AccError('FILE_REQUIRED', 'Не передан аудиофайл', 400);
     }
     const remotePath = assertSoundPath(parsed.data.path);
-    const adapter = connectionManager.requireAdapter();
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS);
     const info = await adapter.stat(remotePath);
     if (!info.isFile) throw new AccError('NOT_A_FILE', 'Цель замены не является файлом', 400);
 
@@ -163,6 +197,99 @@ soundsRouter.post(
   }),
 );
 
+/**
+ * Publishes a sound into the panel's own library on the station. Unlike a system sound, a library
+ * entry can be deleted again — the station's own files stay untouched.
+ */
+soundsRouter.post(
+  '/publish',
+  upload.single('file'),
+  asyncRoute(async (req, res) => {
+    const parsed = z
+      .object({
+        name: z.string().min(1).max(90).optional(),
+        confirm: z.union([z.literal(true), z.literal('true')]).optional(),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      throw new AccError('BAD_REQUEST', 'Не удалось разобрать форму загрузки', 400);
+    }
+    const file = req.file;
+    if (!file || !file.buffer.length) {
+      throw new AccError('FILE_REQUIRED', 'Не передан аудиофайл', 400);
+    }
+    const name = libraryFileName(parsed.data.name ?? file.originalname);
+    const ext = soundExt(name);
+    if (!looksLikeAudio(ext, file.buffer)) {
+      throw new AccError('INVALID_AUDIO', `Содержимое файла не похоже на .${ext}`, 415);
+    }
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS);
+    const target = `${USER_SOUNDS_ROOT}/${name}`;
+    const exists = await adapter
+      .exec(`[ -f ${shQuote(target)} ] && echo YES`, { timeoutMs: 10_000 })
+      .then((result) => result.stdout.trim() === 'YES')
+      .catch(() => false);
+    if (exists && parsed.data.confirm !== true && parsed.data.confirm !== 'true') {
+      throw new AccError(
+        'ALREADY_PUBLISHED',
+        `В библиотеке уже есть «${name}». Подтвердите замену или возьмите другое имя.`,
+        409,
+      );
+    }
+    const free = await remoteFreeBytes(adapter, path.posix.dirname(USER_SOUNDS_ROOT));
+    if (free && free.availableBytes < file.buffer.length + 1024 * 1024) {
+      throw new AccError(
+        'NOT_ENOUGH_SPACE',
+        `На разделе ${free.mount} свободно ${formatBytes(free.availableBytes)} — звук не поместится. `
+          + 'Освободите место на станции или возьмите файл поменьше.',
+        507,
+      );
+    }
+    await adapter.exec(`mkdir -p ${shQuote(USER_SOUNDS_ROOT)}`, { timeoutMs: 10_000 });
+    await writeDeviceFile(adapter, target, file.buffer, 0o644);
+    const sha256 = await remoteSha256(adapter, target);
+    const expected = createHash('sha256').update(file.buffer).digest('hex');
+    if (sha256 !== expected) {
+      await removeDeviceFile(adapter, target).catch(() => undefined);
+      throw new AccError('VERIFY_FAILED', 'Хеш на станции не совпал — файл удалён, попробуйте ещё раз', 502);
+    }
+    eventLog.append({
+      level: 'success',
+      module: 'sounds',
+      operation: 'publish',
+      result: 'ok',
+      message: `Опубликовано в библиотеке: ${name}`,
+      details: { path: target, size: file.buffer.length, replaced: exists },
+    });
+    sendOk(res, toSoundFile(target, file.buffer.length, Date.now(), 'user'));
+  }),
+);
+
+/** Only library sounds are deletable; system ones can be replaced but never removed. */
+soundsRouter.post(
+  '/delete',
+  asyncRoute(async (req, res) => {
+    const parsed = z
+      .object({ path: z.string().min(1), confirm: z.literal(true) })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      throw new AccError('CONFIRMATION_REQUIRED', 'Удаление звука требует подтверждения', 400);
+    }
+    const target = assertUserSoundPath(parsed.data.path);
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS);
+    await removeDeviceFile(adapter, target);
+    eventLog.append({
+      level: 'warn',
+      module: 'sounds',
+      operation: 'delete',
+      result: 'ok',
+      message: `Удалено из библиотеки: ${path.posix.basename(target)}`,
+      details: { path: target },
+    });
+    sendOk(res, { deleted: target });
+  }),
+);
+
 soundsRouter.post(
   '/packs',
   asyncRoute(async (req, res) => {
@@ -176,10 +303,12 @@ soundsRouter.post(
     if (!parsed.success) {
       throw new AccError('CONFIRMATION_REQUIRED', 'Создание пака требует подтверждения', 400);
     }
-    const adapter = connectionManager.requireAdapter();
+    const adapter = await connectionManager.awaitReady();
     const listing = await scanSounds(adapter);
     const category = parsed.data.category && parsed.data.category !== 'all' ? parsed.data.category : null;
-    const files = listing.files.filter((file) => !category || file.category === category);
+    const files = listing.files.filter(
+      (file) => file.origin === 'system' && (!category || file.category === category),
+    );
     if (!files.length) {
       throw new AccError('NOTHING_TO_BACKUP', 'В выбранной категории нет звуков', 400);
     }

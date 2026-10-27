@@ -1956,7 +1956,8 @@ ul {
 
   .hero-art {
     width: 100%;
-    height: 150px;
+    /* Портрет здесь же и 180 px — фиксированные 150 px обрезали бы его снизу. */
+    height: auto;
   }
 
   .file-layout {

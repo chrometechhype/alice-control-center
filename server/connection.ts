@@ -28,6 +28,13 @@ const MAX_FAST_ATTEMPTS = 4;
 const REVIVAL_INTERVAL_MS = 45_000;
 const METRICS_DEATH_STREAK = 3;
 
+/**
+ * Deliberate actions — play, publish, delete, move the volume — are worth waiting for. Measured on
+ * a station stuck in its own update loop, a reconnect takes 6-25 s, so the ambient 6 s window gives
+ * up exactly while the ladder is one step from a live socket.
+ */
+export const ACTION_READY_WAIT_MS = 20_000;
+
 export type { ConnectionSnapshot };
 
 export class ConnectionManager extends EventEmitter {
@@ -113,6 +120,37 @@ export class ConnectionManager extends EventEmitter {
       throw new AccError('NOT_CONNECTED', 'Устройство не подключено', 409);
     }
     return this.adapter;
+  }
+
+  /**
+   * The bridge stalls for a second now and then, and a request landing in that window used to
+   * answer «не подключено» while the reconnect ladder was already rebuilding the socket. Anything a
+   * person is waiting on — playing a sound, publishing a file — gives that a few seconds instead.
+   */
+  async awaitReady(timeoutMs = 6_000): Promise<StationAdapter> {
+    const deadline = Date.now() + timeoutMs;
+    let kicked = false;
+    for (;;) {
+      if (this.adapter?.isConnected()) return this.adapter;
+      if (!this.config) {
+        throw new AccError('NO_CONNECTION_CONFIG', 'Не заданы параметры подключения', 400);
+      }
+      if (this.manualDisconnect) {
+        throw new AccError('NOT_CONNECTED', 'Панель отключилась вручную — нажмите «Подключить»', 409);
+      }
+      if (!kicked && !this.connectPromise) {
+        kicked = true;
+        void this.connect(undefined, { persist: false, source: 'await-ready' }).catch(() => undefined);
+      }
+      if (Date.now() >= deadline) {
+        throw new AccError(
+          'NOT_CONNECTED',
+          'Колонка не отвечает. Панель пытается связаться с ней — попробуйте через несколько секунд.',
+          409,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
   }
 
   getInfo(): DeviceInfo | null {

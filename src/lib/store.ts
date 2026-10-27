@@ -2,6 +2,7 @@ import { computed, reactive } from 'vue';
 import type {
   AccEvent,
   AppSettings,
+  AudioState,
   AuthStatus,
   BackupManifest,
   Capabilities,
@@ -45,6 +46,12 @@ export const store = reactive({
   themeMode: 'system' as ThemeMode,
   toasts: [] as ToastItem[],
   updatingSettings: false,
+  audio: {
+    state: null as AudioState | null,
+    loading: false,
+    busy: false,
+    known: false,
+  },
 });
 
 export const isConnected = computed(() => store.status.state === 'connected');
@@ -54,6 +61,7 @@ let toastSeq = 0;
 let socket: WebSocket | null = null;
 let reconnectTimer: number | null = null;
 let pollTimer: number | null = null;
+let audioTimer: number | null = null;
 let initStarted = false;
 let unauthorizedHandlerAttached = false;
 let snapshotInFlight = false;
@@ -128,9 +136,12 @@ function resetDeviceState(): void {
   store.warnings = [];
   store.metrics = [];
   store.lastSample = null;
+  store.audio.state = null;
+  store.audio.known = false;
 }
 
 export function applySnapshot(snapshot: ConnectionSnapshot): void {
+  const wasConnected = store.status.state === 'connected';
   store.status = snapshot.status;
   store.info = snapshot.info;
   store.capabilities = snapshot.capabilities;
@@ -140,6 +151,13 @@ export function applySnapshot(snapshot: ConnectionSnapshot): void {
     store.metrics = snapshot.metrics.slice(-360);
   } else if (!snapshot.metrics?.length && snapshot.status.state !== 'connected') {
     store.metrics = [];
+  }
+  if (snapshot.status.state === 'connected' && !wasConnected && !store.audio.state) {
+    void refreshAudio().catch(() => undefined);
+  }
+  if (snapshot.status.state !== 'connected') {
+    store.audio.state = null;
+    store.audio.known = false;
   }
 }
 
@@ -225,8 +243,49 @@ export async function refreshMetrics(): Promise<void> {
   if (result.last) store.lastSample = result.last;
 }
 
-export async function refreshProbe(): Promise<void> {
-  const result = await api.post<{
+/**
+ * ALSA `Master` is also what Alice changes with her voice, so the panel re-reads it instead of
+ * trusting the last value it wrote.
+ */
+export async function refreshAudio(): Promise<void> {
+  if (!isConnected.value || store.audio.loading) return;
+  store.audio.loading = true;
+  try {
+    const state = await api.get<AudioState>('/audio', 12_000);
+    store.audio.state = state;
+    store.audio.known = state.volumePct != null;
+  } catch {
+    store.audio.state = null;
+    store.audio.known = false;
+  } finally {
+    store.audio.loading = false;
+  }
+}
+
+export async function setVolume(percent: number): Promise<void> {
+  store.audio.busy = true;
+  try {
+    store.audio.state = await api.post<AudioState>('/audio/volume', { percent });
+    store.audio.known = true;
+  } finally {
+    store.audio.busy = false;
+  }
+}
+
+export async function setMuted(muted: boolean): Promise<void> {
+  store.audio.busy = true;
+  try {
+    store.audio.state = await api.post<AudioState>('/audio/mute', { muted });
+    store.audio.known = true;
+  } finally {
+    store.audio.busy = false;
+  }
+}
+
+export const volumePct = computed(() => store.audio.state?.volumePct ?? null);
+export const volumeMuted = computed(() => store.audio.state?.muted ?? false);
+
+export async function refreshProbe(): Promise<void> {  const result = await api.post<{
     info: DeviceInfo | null;
     capabilities: Capabilities | null;
     warnings: string[];
@@ -275,6 +334,11 @@ function handleWsMessage(raw: string): void {
       store.status = status;
       if (status.state === 'connected' && (!wasConnected || !store.info)) {
         void loadSnapshot().catch(() => undefined);
+        void refreshAudio().catch(() => undefined);
+      }
+      if (status.state !== 'connected') {
+        store.audio.state = null;
+        store.audio.known = false;
       }
       break;
     }
@@ -353,6 +417,7 @@ function bindWakeRecovery(): void {
     wsFailures = 0;
     connectWs();
     void loadSnapshot().catch(() => undefined);
+    void refreshAudio().catch(() => undefined);
   };
   document.addEventListener('visibilitychange', revive);
   window.addEventListener('online', revive);
@@ -381,6 +446,7 @@ export async function bootstrapApp(): Promise<void> {
     loadSnapshot(),
     refreshEvents(),
     refreshBackups(),
+    refreshAudio(),
   ]);
   connectWs();
 }
@@ -404,6 +470,20 @@ function startPolling(): void {
   }, 25_000);
 }
 
+/**
+ * Volume is the one control Alice moves herself, so it is re-read on its own cadence — the metrics
+ * socket does not carry it, and the panel must never show a number the station has left behind.
+ */
+function startAudioPolling(): void {
+  if (audioTimer) return;
+  audioTimer = window.setInterval(() => {
+    if (!store.auth.authenticated || !isConnected.value) return;
+    if (document.visibilityState !== 'visible') return;
+    if (store.audio.busy) return;
+    void refreshAudio().catch(() => undefined);
+  }, 20_000);
+}
+
 export async function initStore(): Promise<void> {
   if (initStarted) return;
   initStarted = true;
@@ -424,6 +504,7 @@ export async function initStore(): Promise<void> {
     store.booted = true;
   }
   startPolling();
+  startAudioPolling();
 }
 
 export async function login(token: string): Promise<void> {

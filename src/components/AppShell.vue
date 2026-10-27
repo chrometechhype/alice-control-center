@@ -151,6 +151,34 @@ async function refresh(): Promise<void> {
         </div>
       </RouterLink>
 
+      <div class="sidebar-controls">
+        <StatusPill :state="store.status.state" />
+        <span class="pill topbar-ws" :class="wsTone" :title="`WebSocket: ${store.wsState}`">
+          <Wifi :size="13" />
+          {{ wsLabel }}
+        </span>
+        <span class="spacer" />
+        <button
+          type="button"
+          class="btn btn--icon btn--sm"
+          title="Обновить данные"
+          :disabled="refreshing"
+          @click="refresh"
+        >
+          <RefreshCw :size="15" :class="{ spin: refreshing }" />
+        </button>
+        <button
+          type="button"
+          class="btn btn--icon btn--sm"
+          :title="themeTitle"
+          :disabled="store.updatingSettings"
+          @click="toggleTheme"
+        >
+          <Moon v-if="store.theme === 'light'" :size="15" />
+          <Sun v-else :size="15" />
+        </button>
+      </div>
+
       <RouterLink to="/setup" class="device-mini">
         <div class="device-mini__portrait">
           <DevicePortrait :info="store.info" size="sm" :muted="!isConnected" />

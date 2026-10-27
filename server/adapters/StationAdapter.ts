@@ -25,6 +25,19 @@ export interface AdapterDirEntry extends AdapterStat {
   name: string;
 }
 
+/** Counters from inside the transport, for reading over concurrent-request failures. */
+export interface AdapterStats {
+  activeChannels: number;
+  queuedWaiters: number;
+  maxChannels: number;
+  refusedOpens: number;
+  timedOutExecs: number;
+  retries: number;
+  sftpBroken: boolean;
+  /** When this adapter instance was built — reconnects reset every counter. */
+  startedAt: number;
+}
+
 export type AdapterEvent = 'closed' | 'state';
 
 export interface StationAdapter {
@@ -40,6 +53,7 @@ export interface StationAdapter {
   downloadFile(remotePath: string, localPath: string): Promise<void>;
   uploadFile(localPath: string, remotePath: string): Promise<void>;
   supportsSftp(): Promise<boolean>;
+  getStats?(): AdapterStats;
   on(event: AdapterEvent, listener: (payload?: Error | string) => void): this;
   off(event: AdapterEvent, listener: (payload?: Error | string) => void): this;
 }

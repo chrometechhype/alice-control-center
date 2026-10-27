@@ -148,6 +148,8 @@ export interface SoundFile {
   mtimeMs: number;
   ext: string;
   playable: boolean;
+  /** `user` lives in the panel's own library and can be deleted; `system` can only be replaced. */
+  origin: 'system' | 'user';
 }
 
 export interface SoundListing {
@@ -155,6 +157,8 @@ export interface SoundListing {
   files: SoundFile[];
   scannedAt: number;
   errors: string[];
+  /** Free bytes on the partition behind the user library, so the UI can warn before an upload. */
+  userFreeBytes?: number | null;
 }
 
 export interface AppSettings {
@@ -347,10 +351,14 @@ export interface BluetoothStatus {
   raw: string;
 }
 
+/** Live ALSA state, read straight from `amixer sget Master` on the station. */
 export interface AudioState {
-  volumePct: number;
-  volumeRaw: number;
-  maxRaw: number;
+  volumePct: number | null;
+  level: number | null;
+  max: number | null;
+  muted: boolean | null;
+  /** False on stations whose Master has no pswitch — there the volume slider is the only mute. */
+  canMute: boolean;
 }
 
 export interface ToolCheck {

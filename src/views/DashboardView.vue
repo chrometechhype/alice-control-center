@@ -7,6 +7,7 @@ import {
   Archive,
   AudioLines,
   Check,
+  ChevronRight,
   Cpu,
   FolderOpen,
   HardDrive,
@@ -19,7 +20,6 @@ import {
   SquareTerminal,
   Thermometer,
   Volume2,
-  VolumeX,
   Workflow,
   X,
   Zap,
@@ -27,8 +27,8 @@ import {
 import Sparkline from '@/components/Sparkline.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
-import StatusPill from '@/components/StatusPill.vue';
 import DevicePortrait from '@/components/DevicePortrait.vue';
+import VolumeControl from '@/components/VolumeControl.vue';
 import { detectDeviceVisual } from '@/lib/deviceVisual';
 import { api, errorMessage } from '@/lib/api';
 import {
@@ -52,21 +52,15 @@ import {
   kindLabel,
 } from '@/lib/format';
 
-interface AudioState {
-  volumePct: number | null;
-  volumeRaw: number | null;
-  max: number | null;
-  muted: boolean | null;
-}
-
 const sample = computed(() => store.lastSample);
 const info = computed(() => store.info);
 const visual = computed(() => detectDeviceVisual(store.info));
 const heroTitle = computed(() => (isConnected.value ? visual.value.label : 'Колонка не подключена'));
 const history = computed(() => store.metrics);
 const ledAvailable = computed(() => Boolean(store.capabilities?.led.available));
-const recentEvents = computed(() => store.events.slice(0, 8));
+const recentEvents = computed(() => store.events.slice(0, 6));
 const lastBackups = computed(() => store.backups.slice(0, 3));
+const soundCount = computed(() => store.capabilities?.sounds.details?.count ?? 0);
 
 const cpuValues = computed(() => history.value.map((item) => item.cpuPct));
 const memValues = computed(() => history.value.map((item) => item.memPct));
@@ -110,51 +104,6 @@ const chartTo = computed(() =>
   history.value.length ? formatTime(history.value[history.value.length - 1].ts) : '—',
 );
 const chartEmpty = computed(() => history.value.length < 2);
-
-const audio = ref<AudioState | null>(null);
-const volume = ref(50);
-const audioBusy = ref(false);
-
-async function loadAudio(): Promise<void> {
-  if (!isConnected.value) return;
-  try {
-    const state = await api.get<AudioState>('/audio');
-    audio.value = state;
-    if (state.volumePct != null) volume.value = state.volumePct;
-  } catch {
-    audio.value = null;
-  }
-}
-
-async function applyVolume(): Promise<void> {
-  if (!isConnected.value) return;
-  audioBusy.value = true;
-  try {
-    const state = await api.post<AudioState>('/audio/volume', { percent: volume.value });
-    audio.value = state;
-    if (state.volumePct != null) volume.value = state.volumePct;
-    pushToast('ok', `Громкость: ${volume.value}%`);
-  } catch (error) {
-    pushToast('error', errorMessage(error));
-  } finally {
-    audioBusy.value = false;
-  }
-}
-
-async function toggleMute(): Promise<void> {
-  if (!isConnected.value) return;
-  audioBusy.value = true;
-  try {
-    const next = !(audio.value?.muted ?? false);
-    const state = await api.post<AudioState>('/audio/mute', { muted: next });
-    audio.value = state;
-    pushToast('info', next ? 'Звук выключен' : 'Звук включён');
-  } catch (error) {
-    pushToast('error', errorMessage(error));
-  } finally {
-    audioBusy.value = false;
-  }
-}
 
 async function quickLed(): Promise<void> {
   const hex = visual.value.accent.replace('#', '');
@@ -224,7 +173,6 @@ function eventIcon(level: string) {
 }
 
 onMounted(() => {
-  void loadAudio();
   void refreshBackups().catch(() => undefined);
 });
 </script>
@@ -268,8 +216,8 @@ onMounted(() => {
     </section>
 
     <template v-if="isConnected">
-      <div class="grid grid-4">
-        <article class="card stat">
+      <div class="ov">
+        <article class="card stat ov-3">
           <div class="stat-top">
             <span class="stat-label">CPU</span>
             <span class="pill pill--muted"><Cpu :size="13" /></span>
@@ -282,7 +230,7 @@ onMounted(() => {
           </div>
         </article>
 
-        <article class="card stat">
+        <article class="card stat ov-3">
           <div class="stat-top">
             <span class="stat-label">Память</span>
             <span class="pill pill--muted"><MemoryStick :size="13" /></span>
@@ -298,7 +246,7 @@ onMounted(() => {
           </div>
         </article>
 
-        <article class="card stat">
+        <article class="card stat ov-3">
           <div class="stat-top">
             <span class="stat-label">Температура</span>
             <span class="pill pill--muted"><Thermometer :size="13" /></span>
@@ -311,7 +259,7 @@ onMounted(() => {
           </div>
         </article>
 
-        <article class="card stat">
+        <article class="card stat ov-3">
           <div class="stat-top">
             <span class="stat-label">Wi-Fi</span>
             <span class="pill pill--muted"><Signal :size="13" /></span>
@@ -323,10 +271,20 @@ onMounted(() => {
             <span class="mono">RSSI</span>
           </div>
         </article>
-      </div>
 
-      <div class="split">
-        <article class="card">
+        <article class="card ov-12 volume-card">
+          <div class="card-head">
+            <div class="card-title"><Volume2 :size="15" /> Громкость</div>
+            <span v-if="store.audio.state?.volumePct != null" class="pill pill--muted">
+              {{ store.audio.state.volumePct }}%
+            </span>
+          </div>
+          <div class="volume-card__control">
+            <VolumeControl />
+          </div>
+        </article>
+
+        <article class="card ov-8">
           <div class="card-head">
             <div>
               <div class="card-title"><Activity :size="15" /> Динамика метрик</div>
@@ -380,10 +338,54 @@ onMounted(() => {
           </template>
         </article>
 
-        <article class="card">
+        <article class="card card--flush ov-4 quick-card">
+          <nav class="quick-list" aria-label="Быстрые переходы">
+            <RouterLink to="/sounds" class="quick-row">
+              <span class="quick-row__icon"><AudioLines :size="16" /></span>
+              <span class="quick-row__main">
+                <strong>Sound Studio</strong>
+                <small>{{ soundCount }} звуков на станции</small>
+              </span>
+              <ChevronRight :size="16" class="quick-row__arrow" />
+            </RouterLink>
+            <button v-if="ledAvailable" type="button" class="quick-row" @click="quickLed">
+              <span class="quick-row__icon"><Lightbulb :size="16" /></span>
+              <span class="quick-row__main">
+                <strong>LED в цвет станции</strong>
+                <small>3 зоны одним нажатием</small>
+              </span>
+              <ChevronRight :size="16" class="quick-row__arrow" />
+            </button>
+            <RouterLink to="/files" class="quick-row">
+              <span class="quick-row__icon"><FolderOpen :size="16" /></span>
+              <span class="quick-row__main">
+                <strong>Файлы станции</strong>
+                <small>Разрешённые каталоги</small>
+              </span>
+              <ChevronRight :size="16" class="quick-row__arrow" />
+            </RouterLink>
+            <RouterLink to="/automation" class="quick-row">
+              <span class="quick-row__icon"><Workflow :size="16" /></span>
+              <span class="quick-row__main">
+                <strong>Сценарии</strong>
+                <small>Реальные события</small>
+              </span>
+              <ChevronRight :size="16" class="quick-row__arrow" />
+            </RouterLink>
+            <RouterLink to="/terminal" class="quick-row">
+              <span class="quick-row__icon"><SquareTerminal :size="16" /></span>
+              <span class="quick-row__main">
+                <strong>Терминал</strong>
+                <small>Белый список команд</small>
+              </span>
+              <ChevronRight :size="16" class="quick-row__arrow" />
+            </RouterLink>
+          </nav>
+        </article>
+
+        <article class="card ov-4">
           <div class="card-head">
             <div class="card-title"><HardDrive :size="15" /> Устройство</div>
-            <StatusPill :state="store.status.state" />
           </div>
           <div class="kv">
             <div class="kv-row"><span class="kv-key">Hostname</span><span class="kv-value mono">{{ info?.hostname || '—' }}</span></div>
@@ -397,83 +399,16 @@ onMounted(() => {
             <div class="kv-row"><span class="kv-key">/data</span><span class="kv-value">{{ sample?.dataTotalBytes ? `${formatBytes(sample.dataUsedBytes)} / ${formatBytes(sample.dataTotalBytes)}` : '—' }}</span></div>
             <div class="kv-row"><span class="kv-key">Uptime</span><span class="kv-value">{{ formatUptime(sample?.uptimeSec ?? info?.uptimeSec) }}</span></div>
           </div>
-          <div v-if="store.warnings.length" class="stack mt-12" style="gap: 8px">
-            <div v-for="warning in store.warnings" :key="warning" class="alert alert--warn">
-              <AlertTriangle :size="15" />
-              <div>{{ warning }}</div>
-            </div>
-          </div>
-        </article>
-      </div>
-
-      <div class="split">
-        <article class="card">
-          <div class="card-head">
-            <div>
-              <div class="card-title"><Zap :size="15" /> Быстрые действия</div>
-              <div class="card-sub">Громкость ALSA и переходы в модули</div>
-            </div>
-            <span class="pill pill--muted">{{ audio?.volumePct != null ? `${audio.volumePct}%` : 'ALSA' }}</span>
-          </div>
-
-          <div class="audio-box">
-            <button
-              type="button"
-              class="btn btn--icon"
-              :disabled="audioBusy"
-              :title="audio?.muted ? 'Включить звук' : 'Выключить звук'"
-              @click="toggleMute"
-            >
-              <VolumeX v-if="audio?.muted" :size="16" />
-              <Volume2 v-else :size="16" />
-            </button>
-            <input
-              v-model.number="volume"
-              type="range"
-              min="0"
-              max="100"
-              step="1"
-              class="range"
-              :disabled="audioBusy"
-              @change="applyVolume"
-            />
-            <span class="mono nowrap">{{ volume }}%</span>
-          </div>
-          <div v-if="audio?.muted" class="field-hint mt-8">Звук выключен на устройстве.</div>
-
-          <div class="actions-grid mt-16">
-            <RouterLink to="/sounds" class="action-tile">
-              <AudioLines :size="17" />
-              <span>Sound Studio</span>
-              <small>{{ store.capabilities?.sounds.details?.count ?? 0 }} файлов</small>
-            </RouterLink>
-            <button v-if="ledAvailable" type="button" class="action-tile" @click="quickLed">
-              <Lightbulb :size="17" />
-              <span>LED в цвет станции</span>
-              <small>3 зоны</small>
-            </button>
-            <RouterLink to="/files" class="action-tile">
-              <FolderOpen :size="17" />
-              <span>Файлы</span>
-              <small>Разрешённые каталоги</small>
-            </RouterLink>
-            <RouterLink to="/terminal" class="action-tile">
-              <SquareTerminal :size="17" />
-              <span>Терминал</span>
-              <small>Белый список</small>
-            </RouterLink>
-            <RouterLink to="/automation" class="action-tile">
-              <Workflow :size="17" />
-              <span>Сценарии</span>
-              <small>Реальные события</small>
-            </RouterLink>
-          </div>
         </article>
 
-        <article class="card card--flush">
+        <article class="card card--flush ov-8">
           <div class="card-head" style="padding: 18px 20px 0; margin-bottom: 10px">
             <div class="card-title"><Activity :size="15" /> Последние события</div>
             <RouterLink to="/events" class="btn btn--ghost btn--sm">Все события</RouterLink>
+          </div>
+          <div v-if="store.warnings.length" class="alert alert--warn" style="margin: 0 20px 10px">
+            <AlertTriangle :size="15" />
+            <div>{{ store.warnings[0] }}</div>
           </div>
           <div v-if="recentEvents.length" class="list">
             <div v-for="event in recentEvents" :key="event.id" class="event-row">
@@ -488,10 +423,8 @@ onMounted(() => {
           </div>
           <EmptyState v-else title="Журнал пуст" text="События появятся после подключения и первых действий." />
         </article>
-      </div>
 
-      <div class="grid grid-2">
-        <article class="card">
+        <article class="card ov-6">
           <div class="card-head">
             <div>
               <div class="card-title"><Archive :size="15" /> Бэкапы</div>
@@ -518,7 +451,7 @@ onMounted(() => {
           </button>
         </article>
 
-        <article class="card">
+        <article class="card ov-6">
           <div class="card-head">
             <div>
               <div class="card-title"><ShieldCheck :size="15" /> Безопасность</div>
@@ -583,3 +516,140 @@ onMounted(() => {
     />
   </div>
 </template>
+
+<style scoped>
+.ov {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 14px;
+  /* Карточки остаются по высоте содержимого: растянутая карточка с пустым низом — это то самое
+     «пустое место», на которое жаловался обзор. */
+  align-items: start;
+}
+
+.ov > .ov-3 {
+  grid-column: span 3;
+}
+.ov > .ov-4 {
+  grid-column: span 4;
+}
+.ov > .ov-6 {
+  grid-column: span 6;
+}
+.ov > .ov-8 {
+  grid-column: span 8;
+}
+.ov > .ov-12 {
+  grid-column: span 12;
+}
+
+.volume-card {
+  display: grid;
+  grid-template-columns: minmax(0, 232px) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 28px;
+}
+
+.volume-card .card-head {
+  margin-bottom: 0;
+}
+
+.volume-card__control :deep(.volume) {
+  gap: 14px;
+}
+
+.quick-card {
+  padding: 6px 8px;
+}
+
+.quick-list {
+  display: grid;
+  gap: 2px;
+}
+
+.quick-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.18s var(--ease), transform 0.18s var(--ease);
+}
+
+.quick-row:hover {
+  background: var(--surface-2);
+}
+
+.quick-row:active {
+  transform: scale(0.99);
+}
+
+.quick-row__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+
+.quick-row__main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.quick-row__main strong {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.quick-row__main small {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.quick-row__arrow {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+@media (max-width: 1180px) {
+  .ov > .ov-3 {
+    grid-column: span 6;
+  }
+  .ov > .ov-8,
+  .ov > .ov-4,
+  .ov > .ov-6 {
+    grid-column: span 12;
+  }
+}
+
+@media (max-width: 760px) {
+  .volume-card {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 12px;
+  }
+}
+
+@media (max-width: 620px) {
+  .ov {
+    gap: 10px;
+  }
+
+  .ov > .ov-3 {
+    grid-column: span 12;
+  }
+}
+</style>

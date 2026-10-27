@@ -81,6 +81,18 @@ connectionRouter.get(
 );
 
 connectionRouter.get(
+  '/transport-stats',
+  asyncRoute(async (_req, res) => {
+    const adapter = connectionManager.getAdapter();
+    sendOk(res, {
+      state: connectionManager.getStatus().state,
+      transport: adapter?.transport ?? null,
+      stats: adapter?.getStats?.() ?? null,
+    });
+  }),
+);
+
+connectionRouter.get(
   '/tools',
   asyncRoute(async (_req, res) => {
     sendOk(res, await checkHostTools());

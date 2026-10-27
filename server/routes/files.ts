@@ -21,6 +21,8 @@ export const filesRouter = Router();
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 32 * 1024 * 1024, files: 1 },
+  // Without this, a Cyrillic filename arrives as latin1 mojibake and is written to the station as-is.
+  defParamCharset: 'utf8',
 });
 
 const TEXT_MAX_BYTES = 512 * 1024;
