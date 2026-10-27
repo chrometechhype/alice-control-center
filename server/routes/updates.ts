@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { asyncRoute, sendOk } from '../http.ts';
 import {
   checkForUpdates,
-  currentVersion,
   installUpdate,
   readUpdateState,
   UPDATE_REPO,
@@ -16,7 +15,6 @@ updatesRouter.get(
   asyncRoute(async (_req, res) => {
     sendOk(res, {
       ...(await checkForUpdates(false)),
-      currentVersion: currentVersion(),
       repo: UPDATE_REPO,
       state: readUpdateState(),
     });
@@ -29,7 +27,6 @@ updatesRouter.post(
     const force = Boolean(req.body?.force);
     sendOk(res, {
       ...(await checkForUpdates(force)),
-      currentVersion: currentVersion(),
       repo: UPDATE_REPO,
       state: readUpdateState(),
     });

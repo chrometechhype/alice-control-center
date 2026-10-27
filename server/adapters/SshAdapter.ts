@@ -92,8 +92,8 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
         }
       });
 
-      client.on('close', (hadError: boolean) => {
-        notifyClosed(hadError ? 'transport closed with error' : 'transport closed');
+      client.on('close', () => {
+        notifyClosed('transport closed');
       });
 
       const options: Record<string, unknown> = {

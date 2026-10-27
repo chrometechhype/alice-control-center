@@ -7,6 +7,11 @@ export interface AiCallOptions {
   maxTokens?: number;
   temperature?: number;
   timeoutMs?: number;
+  /**
+   * Ask the server for a JSON object only. Local and some proxy servers reject the parameter,
+   * so the call silently retries without it.
+   */
+  jsonMode?: boolean;
 }
 
 export interface AiCallResult {
@@ -68,9 +73,8 @@ export async function callAi(
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const startedAt = Date.now();
-  let response: Response;
-  try {
-    response = await fetch(endpoint, {
+  const post = (jsonMode: boolean) =>
+    fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -81,9 +85,17 @@ export async function callAi(
         messages,
         temperature: options.temperature ?? 0.8,
         max_tokens: options.maxTokens ?? 2600,
+        ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
       }),
       signal: controller.signal,
     });
+  let response: Response;
+  try {
+    response = await post(Boolean(options.jsonMode));
+    if (!response.ok && options.jsonMode && [400, 404, 422].includes(response.status)) {
+      // The server does not know response_format — repeat without it.
+      response = await post(false);
+    }
   } catch (caught) {
     const aborted = caught instanceof Error && caught.name === 'AbortError';
     throw new AccError(

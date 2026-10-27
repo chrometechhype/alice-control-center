@@ -7,57 +7,29 @@ import { eventLog } from '../events.ts';
 import { AccError } from '../errors.ts';
 import { asyncRoute, sendOk } from '../http.ts';
 import { requireZones } from '../ledControl.ts';
+import {
+  buildScene,
+  sceneRepairPrompt,
+  sceneSystemPrompt,
+  type PreparedScene,
+} from '../sceneDsl.ts';
 
 export const aiRouter = Router();
 
-const MAX_FRAMES = 32;
+const MAX_PIXELS_PER_FRAME = 64;
 
-function parseScene(raw: string, zones: number, prompt: string): { name: string; fps: number; frames: number[][][] } {
-  const cleaned = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-  const objectStart = cleaned.indexOf('{');
-  const objectEnd = cleaned.lastIndexOf('}');
-  const arrayStart = cleaned.indexOf('[');
-  const arrayEnd = cleaned.lastIndexOf(']');
-  let parsed: unknown;
-  try {
-    if (objectStart >= 0 && objectEnd > objectStart) parsed = JSON.parse(cleaned.slice(objectStart, objectEnd + 1));
-    else if (arrayStart >= 0 && arrayEnd > arrayStart) parsed = JSON.parse(cleaned.slice(arrayStart, arrayEnd + 1));
-    else throw new Error('no json');
-  } catch {
-    throw new AccError('AI_BAD_RESPONSE', 'ИИ вернул не JSON. Попробуйте ещё раз или смените модель.', 502);
-  }
-  const object = Array.isArray(parsed) ? null : (parsed as { name?: unknown; fps?: unknown; frames?: unknown });
-  const candidate = Array.isArray(parsed) ? parsed : object?.frames;
-  if (!Array.isArray(candidate) || candidate.length < 2) {
-    throw new AccError('AI_BAD_RESPONSE', 'В ответе ИИ нет кадров анимации. Попробуйте ещё раз.', 502);
-  }
-  if (candidate.length > MAX_FRAMES) candidate.length = MAX_FRAMES;
-  const frames: number[][][] = [];
-  for (const frame of candidate) {
-    if (!Array.isArray(frame)) continue;
-    const colors: number[][] = [];
-    for (const color of frame) {
-      if (!Array.isArray(color) || color.length < 3) continue;
-      colors.push(
-        color.slice(0, 3).map((value) => {
-          const number = Number(value);
-          return Number.isFinite(number) ? Math.min(255, Math.max(0, Math.round(number))) : 0;
-        }),
-      );
-    }
-    if (colors.length) frames.push(colors);
-  }
-  if (frames.length < 2) {
-    throw new AccError('AI_BAD_RESPONSE', 'В ответе ИИ слишком мало корректных кадров.', 502);
-  }
-  const normalized = frames.map((frame) =>
-    Array.from({ length: zones }, (_, index) => [...(frame[index % frame.length] ?? [0, 0, 0])]),
+function isDark(scene: PreparedScene): boolean {
+  return scene.frames.every((frame) =>
+    frame.every((pixel) => pixel.every((value) => value < 12)),
   );
-  const rawFps = Number(object?.fps);
-  const fps = Number.isFinite(rawFps) ? Math.min(60, Math.max(1, Math.round(rawFps))) : 20;
-  const rawName = typeof object?.name === 'string' ? object.name.trim().replace(/\s+/g, ' ') : '';
-  const name = (rawName || prompt).slice(0, 48);
-  return { name, fps, frames: normalized };
+}
+
+function validate(scene: PreparedScene, zones: number): string | null {
+  if (!scene.frames.length) return 'в сцене нет кадров';
+  if (scene.frames.some((frame) => frame.length !== zones)) return `каждый кадр должен содержать ровно ${zones} зон`;
+  if (scene.frames.length > MAX_PIXELS_PER_FRAME * 2) return 'слишком много кадров';
+  if (isDark(scene)) return 'сцена получилась полностью тёмной, сделай ярче';
+  return null;
 }
 
 aiRouter.post(
@@ -82,31 +54,57 @@ aiRouter.post(
     }
     const zones = requireZones().length;
     const prompt = parsed.data.prompt;
-    const messages = [
-      {
-        role: 'system',
-        content: [
-          'You are a professional LED animation designer for a smart speaker with a circular RGB light ring.',
-          `The ring has ${zones} independent zones, each color is RGB 0..255.`,
-          'Create a high-quality, smooth and seamless loop for the user description.',
-          'Choose FPS yourself based on the effect: 6-12 for slow gradients, 15-24 for smooth flow, 30-60 for fast flicker.',
-          'Return ONLY valid JSON, no markdown, in this exact shape:',
-          `{"name":"short Russian name up to 32 chars","fps":18,"frames":[[[r,g,b], ...exactly ${zones} colors], ...]}`,
-          'Rules: 10-24 frames, integers 0..255, harmonious palette, first frame visible,',
-          'no all-black frames, smooth loop from last frame back to first, no text inside JSON.',
-        ].join(' '),
-      },
-      {
-        role: 'user',
-        content: `Описание сцены: ${prompt}`,
-      },
+    const messages: Array<{ role: string; content: string }> = [
+      { role: 'system', content: sceneSystemPrompt(zones) },
+      { role: 'user', content: `Описание сцены: ${prompt}` },
     ];
-    const result = await callAi(config, messages, {
-      temperature: 0.85,
-      maxTokens: 3000,
-      timeoutMs: 90_000,
-    });
-    const scene = parseScene(result.content, zones, prompt);
+
+    let scene: PreparedScene | null = null;
+    let failure = '';
+    let elapsedMs = 0;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let content = '';
+      failure = '';
+      try {
+        const result = await callAi(config, messages, {
+          temperature: attempt === 0 ? 0.7 : 0.2,
+          maxTokens: 1600,
+          timeoutMs: 75_000,
+          jsonMode: true,
+        });
+        elapsedMs += result.elapsedMs;
+        content = result.content;
+      } catch (error) {
+        // Reasoning models spend the whole budget on thinking and answer with an empty message.
+        // That is worth one repair round instead of a hard failure.
+        if (!(error instanceof AccError) || error.code !== 'AI_BAD_RESPONSE') throw error;
+        failure = 'ИИ прислал пустой ответ';
+      }
+      try {
+        scene = buildScene(content, zones, prompt);
+      } catch (error) {
+        failure = error instanceof AccError ? error.message : 'ИИ прислал нечитаемый ответ';
+        scene = null;
+      }
+      const problem = scene ? validate(scene, zones) : null;
+      if (scene && !problem) break;
+      if (!scene && !failure) failure = 'ИИ не прислал JSON со сценой';
+      if (problem) failure = problem;
+      scene = null;
+      messages.push(
+        { role: 'assistant', content: content.slice(0, 600) },
+        { role: 'user', content: sceneRepairPrompt(failure) },
+      );
+    }
+
+    if (!scene) {
+      throw new AccError(
+        'AI_BAD_SCENE',
+        `${failure || 'ИИ не смог собрать сцену'}. Модель ${config.model} не справляется — попробуйте другую или упростите описание.`,
+        502,
+      );
+    }
+
     const preset = AI_PROVIDER_PRESETS.find((item) => item.id === config.provider);
     eventLog.append({
       level: 'info',
@@ -121,7 +119,7 @@ aiRouter.post(
         frames: scene.frames.length,
         zones,
         fps: scene.fps,
-        ms: result.elapsedMs,
+        ms: elapsedMs,
       },
     });
     sendOk(res, {
@@ -129,8 +127,8 @@ aiRouter.post(
       fps: scene.fps,
       frames: scene.frames,
       provider: preset?.label ?? config.provider,
-      model: result.model,
-      elapsedMs: result.elapsedMs,
+      model: config.model,
+      elapsedMs,
     });
   }),
 );

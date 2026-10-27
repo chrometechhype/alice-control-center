@@ -10,6 +10,9 @@ export interface DeviceConnectionConfig {
   password?: string;
   privateKeyPath?: string;
   autoReconnect: boolean;
+  /** MAC and device id of the station we last talked to — used to find it after DHCP moves it. */
+  mac?: string;
+  deviceId?: string;
 }
 
 export interface ConnectionStatus {
@@ -188,6 +191,9 @@ export interface AiProviderPreset {
   model: string;
   requiresKey: boolean;
   note: string;
+  /** OpenAI-совместимый /audio/speech: модель и голос для озвучки текста. */
+  ttsModel?: string;
+  ttsVoice?: string;
 }
 
 export const AI_PROVIDER_PRESETS: AiProviderPreset[] = [
@@ -198,6 +204,8 @@ export const AI_PROVIDER_PRESETS: AiProviderPreset[] = [
     model: 'gpt-4o-mini',
     requiresKey: true,
     note: 'Официальный API OpenAI. Нужен ключ вида sk-...',
+    ttsModel: 'tts-1',
+    ttsVoice: 'alloy',
   },
   {
     id: 'openrouter',
@@ -214,6 +222,8 @@ export const AI_PROVIDER_PRESETS: AiProviderPreset[] = [
     model: 'llama-3.3-70b-versatile',
     requiresKey: true,
     note: 'Быстрый бесплатный тариф с ключом из консоли Groq.',
+    ttsModel: 'playai-tts',
+    ttsVoice: 'Apollo-PlayAI',
   },
   {
     id: 'pollinations',
@@ -254,6 +264,8 @@ export interface AiConfig {
   baseUrl: string;
   model: string;
   apiKey?: string;
+  ttsModel?: string;
+  ttsVoice?: string;
 }
 
 export interface PublicAiSettings {
@@ -262,6 +274,8 @@ export interface PublicAiSettings {
   model: string;
   hasKey: boolean;
   configured: boolean;
+  ttsModel: string;
+  ttsVoice: string;
   presets: AiProviderPreset[];
 }
 
@@ -403,6 +417,9 @@ export interface UpdateInfo {
   repo: string;
   releaseUrl: string | null;
   notes: string;
+  /** Release notes boiled down to plain bullet lines the panel can actually render. */
+  highlights: string[];
+  assetSizeBytes: number | null;
   publishedAt: string | null;
   checkedAt: number | null;
   checkError?: string;

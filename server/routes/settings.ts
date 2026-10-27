@@ -16,6 +16,7 @@ import { localOnly, requireAuth } from '../auth.ts';
 import { asyncRoute, sendOk } from '../http.ts';
 import { eventLog } from '../events.ts';
 import { AccError } from '../errors.ts';
+import { addFirewallRule, FIREWALL_RULE, firewallState, panelAddresses } from '../lanAccess.ts';
 import { testAiConnection } from '../ai.ts';
 import { AI_PROVIDER_PRESETS, type AiProviderId } from '../../shared/types.ts';
 
@@ -87,13 +88,58 @@ settingsRouter.post(
 );
 
 settingsRouter.get(
+  '/phone-access',
+  localOnly,
+  asyncRoute(async (_req, res) => {
+    const port = Number(process.env.ACC_PORT ?? 8722);
+    const stationHost = connectionManager.getStatus().host ?? null;
+    const addresses = panelAddresses(stationHost);
+    sendOk(res, {
+      port,
+      lanAccess: publicSettings().lanAccess,
+      listeningOn: publicSettings().lanAccess ? '0.0.0.0' : '127.0.0.1',
+      stationHost,
+      addresses,
+      best: addresses[0]?.address ?? null,
+      firewall: await firewallState(port),
+    });
+  }),
+);
+
+settingsRouter.post(
+  '/firewall',
+  localOnly,
+  asyncRoute(async (_req, res) => {
+    const port = Number(process.env.ACC_PORT ?? 8722);
+    if (process.platform !== 'win32') {
+      throw new AccError('FIREWALL_UNSUPPORTED', 'Правило брандмауэра настраивается только в Windows', 400);
+    }
+    await addFirewallRule(port);
+    eventLog.append({
+      level: 'warn',
+      module: 'settings',
+      operation: 'firewall-rule',
+      result: 'ok',
+      message: `Добавлено правило брандмауэра Windows для порта ${port}`,
+      details: { rule: FIREWALL_RULE, port },
+    });
+    sendOk(res, await firewallState(port));
+  }),
+);
+
+settingsRouter.get(
   '/lan-qr',
   localOnly,
   asyncRoute(async (req, res) => {
     const port = Number(process.env.ACC_PORT ?? 8722);
-    const address = lanAddresses()[0];
+    const stationHost = typeof req.query.station === 'string' ? req.query.station : null;
+    const candidates = panelAddresses(stationHost);
+    const requested = typeof req.query.address === 'string' ? req.query.address : undefined;
+    const address = requested
+      ? (candidates.find((item) => item.address === requested)?.address ?? null)
+      : (candidates[0]?.address ?? lanAddresses()[0] ?? null);
     if (!address) {
-      sendOk(res, { dataUrl: null, url: null });
+      sendOk(res, { dataUrl: null, url: null, addresses: candidates.map((item) => item.address) });
       return;
     }
     const url = `http://${address}:${port}/`;
@@ -102,7 +148,7 @@ settingsRouter.get(
       width: 320,
       color: { dark: '#0b0d10', light: '#ffffff' },
     });
-    sendOk(res, { dataUrl, url });
+    sendOk(res, { dataUrl, url, addresses: candidates.map((item) => item.address) });
   }),
 );
 
@@ -121,6 +167,8 @@ const aiSchema = z
     baseUrl: z.string().trim().max(500).optional(),
     model: z.string().trim().max(200).optional(),
     apiKey: z.string().trim().max(600).optional(),
+    ttsModel: z.string().trim().max(200).optional(),
+    ttsVoice: z.string().trim().max(200).optional(),
     clearKey: z.boolean().optional(),
   })
   .strict();
@@ -153,11 +201,18 @@ settingsRouter.put(
       : body.clearKey || providerChanged
         ? undefined
         : existing.apiKey;
+    const fallbackTts: { model?: string; voice?: string } = providerChanged
+      ? {}
+      : { model: existing.ttsModel, voice: existing.ttsVoice };
+    const ttsModel = (body.ttsModel ?? fallbackTts.model ?? preset?.ttsModel ?? '').trim();
+    const ttsVoice = (body.ttsVoice ?? fallbackTts.voice ?? preset?.ttsVoice ?? '').trim();
     saveAiConfig({
       provider: body.provider,
       baseUrl,
       model,
       ...(nextKey ? { apiKey: nextKey } : {}),
+      ...(ttsModel ? { ttsModel } : {}),
+      ...(ttsVoice ? { ttsVoice } : {}),
     });
     eventLog.append({
       level: 'info',

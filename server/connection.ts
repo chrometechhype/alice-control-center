@@ -21,9 +21,12 @@ import { AccError } from './errors.ts';
 import { eventLog } from './events.ts';
 import { MetricsService } from './metrics.ts';
 import { runProbe, type ProbeResult } from './probe.ts';
+import { findIpByMac, macOfIp } from './discovery.ts';
 import { safeErrorMessage } from './util.ts';
 
-const MAX_RECONNECT_ATTEMPTS = 5;
+const MAX_FAST_ATTEMPTS = 4;
+const REVIVAL_INTERVAL_MS = 45_000;
+const METRICS_DEATH_STREAK = 3;
 
 export type { ConnectionSnapshot };
 
@@ -37,6 +40,8 @@ export class ConnectionManager extends EventEmitter {
   private lastProbe: ProbeResult | null = null;
   private metrics: MetricsService;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private revivalTimer: NodeJS.Timeout | null = null;
+  private connectPromise: Promise<ConnectionSnapshot> | null = null;
   private attempts = 0;
   private manualDisconnect = false;
   private metricsErrorStreak = 0;
@@ -69,6 +74,14 @@ export class ConnectionManager extends EventEmitter {
           message: 'Не удалось получить метрики устройства',
           details: { error: safeErrorMessage(error) },
         });
+      }
+      // A dead TCP peer can keep reporting "connected" forever; metrics are our heartbeat.
+      if (
+        this.metricsErrorStreak >= METRICS_DEATH_STREAK &&
+        this.status.state === 'connected' &&
+        !this.connectPromise
+      ) {
+        void this.teardownAdapter().then(() => this.handleUnexpectedClose('метрики не приходят'));
       }
     });
   }
@@ -166,7 +179,28 @@ export class ConnectionManager extends EventEmitter {
     }
   }
 
+  /**
+   * One connect at a time. Auto-reconnect, startup and a manual retry used to race and tear
+   * each other's fresh socket down, which looked to the user like endless reconnecting.
+   */
   async connect(
+    config?: DeviceConnectionConfig,
+    options: { persist?: boolean; source?: string } = {},
+  ): Promise<ConnectionSnapshot> {
+    if (this.connectPromise) {
+      if (!config) return this.connectPromise;
+      await this.connectPromise.catch(() => undefined);
+    }
+    const promise = this.openConnection(config, options);
+    this.connectPromise = promise;
+    try {
+      return await promise;
+    } finally {
+      if (this.connectPromise === promise) this.connectPromise = null;
+    }
+  }
+
+  private async openConnection(
     config?: DeviceConnectionConfig,
     options: { persist?: boolean; source?: string } = {},
   ): Promise<ConnectionSnapshot> {
@@ -179,17 +213,22 @@ export class ConnectionManager extends EventEmitter {
     this.stopReconnect();
     await this.teardownAdapter();
 
-    this.config = { ...target };
+    if (options.source === 'auto-reconnect' && this.attempts >= 2) {
+      await this.rehomeIfNeeded();
+    }
+    const resolved = this.config ?? target;
+
+    this.config = { ...resolved };
     this.status = {
       state: 'connecting',
-      transport: target.transport,
-      host: target.host,
-      port: target.port,
-      username: target.username,
+      transport: resolved.transport,
+      host: resolved.host,
+      port: resolved.port,
+      username: resolved.username,
     };
     this.emit('status', this.getStatus());
 
-    if (target.transport !== 'ssh') {
+    if (resolved.transport !== 'ssh') {
       this.status = {
         ...this.status,
         state: 'error',
@@ -199,7 +238,7 @@ export class ConnectionManager extends EventEmitter {
       throw new AccError('UNSUPPORTED_TRANSPORT', 'Транспорт не поддерживается', 400);
     }
 
-    const adapter = new SshAdapter(target);
+    const adapter = new SshAdapter(resolved);
     this.adapter = adapter;
     adapter.on('closed', (reason?: string) => {
       if (this.adapter === adapter) this.handleUnexpectedClose(reason);
@@ -211,15 +250,16 @@ export class ConnectionManager extends EventEmitter {
       this.applyProbe(probe);
       this.status = {
         state: 'connected',
-        transport: target.transport,
-        host: target.host,
-        port: target.port,
-        username: target.username,
+        transport: resolved.transport,
+        host: resolved.host,
+        port: resolved.port,
+        username: resolved.username,
         connectedAt: Date.now(),
       };
       this.attempts = 0;
       this.metricsErrorStreak = 0;
-      if (persist) saveConnection(target);
+      if (persist) saveConnection(resolved);
+      await this.learnIdentity(probe);
       this.metrics.start();
       this.emit('status', this.getStatus());
       this.emit('probe', probe);
@@ -228,7 +268,7 @@ export class ConnectionManager extends EventEmitter {
         module: 'connection',
         operation: 'connect',
         result: 'ok',
-        message: `Подключено: ${probe.info.modelGuess} (${target.host}:${target.port})`,
+        message: `Подключено: ${probe.info.modelGuess} (${resolved.host}:${resolved.port})`,
         details: {
           model: probe.info.modelGuess,
           firmware: probe.info.firmware,
@@ -242,10 +282,10 @@ export class ConnectionManager extends EventEmitter {
       const autoRetry = options.source === 'auto-reconnect';
       this.status = {
         state: autoRetry ? 'reconnecting' : 'error',
-        transport: target.transport,
-        host: target.host,
-        port: target.port,
-        username: target.username,
+        transport: resolved.transport,
+        host: resolved.host,
+        port: resolved.port,
+        username: resolved.username,
         lastError: autoRetry ? undefined : message,
         reconnectAttempt: autoRetry ? this.attempts : undefined,
         nextRetryAt: autoRetry ? this.status.nextRetryAt : undefined,
@@ -262,7 +302,7 @@ export class ConnectionManager extends EventEmitter {
           operation: 'connect',
           result: 'error',
           message: 'Подключение не удалось',
-          details: { host: target.host, port: target.port, error: message },
+          details: { host: resolved.host, port: resolved.port, error: message },
         });
       }
       throw error instanceof AccError
@@ -359,21 +399,33 @@ export class ConnectionManager extends EventEmitter {
 
   private scheduleReconnect(): void {
     if (!this.config) return;
-    if (this.attempts >= MAX_RECONNECT_ATTEMPTS) {
+    if (this.reconnectTimer || this.revivalTimer || this.connectPromise) return;
+    if (this.attempts >= MAX_FAST_ATTEMPTS) {
+      // Giving up entirely was the worst part of the old behaviour: the station comes back
+      // after a reboot or a new DHCP lease, and the panel stayed dead until a manual retry.
+      this.attempts = 0;
       this.status = {
         ...this.status,
-        state: 'error',
-        lastError: 'Не удалось восстановить соединение после 5 попыток',
-        reconnectAttempt: this.attempts,
+        state: 'reconnecting',
+        lastError: undefined,
+        reconnectAttempt: undefined,
+        nextRetryAt: Date.now() + REVIVAL_INTERVAL_MS,
       };
       this.emit('status', this.getStatus());
       eventLog.append({
-        level: 'error',
+        level: 'warn',
         module: 'connection',
         operation: 'reconnect',
         result: 'error',
-        message: 'Повторные подключения исчерпаны',
+        message: 'Колонка не отвечает. Ищем её в сети каждые 45 секунд.',
       });
+      this.revivalTimer = setTimeout(() => {
+        this.revivalTimer = null;
+        this.reconnectTimer = null;
+        void this.connect(undefined, { persist: false, source: 'auto-reconnect' }).catch(() => {
+          if (!this.manualDisconnect) this.scheduleReconnect();
+        });
+      }, REVIVAL_INTERVAL_MS);
       return;
     }
     const delay = this.attempts === 0 ? 800 : Math.min(20_000, 1500 * 2 ** (this.attempts - 1));
@@ -388,7 +440,7 @@ export class ConnectionManager extends EventEmitter {
     this.emit('status', this.getStatus());
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      void this.connect(this.config!, { persist: false, source: 'auto-reconnect' }).catch(() => {
+      void this.connect(undefined, { persist: false, source: 'auto-reconnect' }).catch(() => {
         if (!this.manualDisconnect) this.scheduleReconnect();
       });
     }, delay);
@@ -396,7 +448,42 @@ export class ConnectionManager extends EventEmitter {
 
   private stopReconnect(): void {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.revivalTimer) clearTimeout(this.revivalTimer);
     this.reconnectTimer = null;
+    this.revivalTimer = null;
+  }
+
+  /** Remembers how the station looks on the network so we can find it after DHCP moves it. */
+  private async learnIdentity(probe: ProbeResult): Promise<void> {
+    const config = this.config;
+    if (!config) return;
+    const mac = await macOfIp(config.host).catch(() => undefined);
+    const next: DeviceConnectionConfig = {
+      ...config,
+      mac: mac ?? config.mac,
+      deviceId: probe.info.deviceId ?? config.deviceId,
+    };
+    if (next.mac === config.mac && next.deviceId === config.deviceId) return;
+    this.config = next;
+    saveConnection(next);
+  }
+
+  /** When the saved address is gone, follow the station's MAC to its new IP. */
+  private async rehomeIfNeeded(): Promise<void> {
+    const config = this.config;
+    if (!config?.mac) return;
+    const found = await findIpByMac(config.mac).catch(() => null);
+    if (!found || found === config.host) return;
+    this.config = { ...config, host: found };
+    saveConnection(this.config);
+    eventLog.append({
+      level: 'info',
+      module: 'connection',
+      operation: 'rehome',
+      result: 'ok',
+      message: `Колонка сменила адрес: ${config.host} → ${found}`,
+      details: { mac: config.mac },
+    });
   }
 
   private async teardownAdapter(): Promise<void> {

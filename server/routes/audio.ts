@@ -5,6 +5,8 @@ import { AccError } from '../errors.ts';
 import { eventLog } from '../events.ts';
 import { asyncRoute, sendOk } from '../http.ts';
 import { parseAmixerMaster } from '../parse.ts';
+import { assertSoundPath } from '../security/paths.ts';
+import { findPlayers, playDeviceFile, playTempAudio, synthesizeSpeech } from '../voice.ts';
 import { clamp } from '../util.ts';
 
 export const audioRouter = Router();
@@ -77,5 +79,76 @@ audioRouter.post(
       message: parsed.data.muted ? 'Звук выключен' : 'Звук включён',
     });
     sendOk(res, await readMaster());
+  }),
+);
+
+/** What the station can actually play with — the UI asks before enabling the buttons. */
+audioRouter.get(
+  '/players',
+  asyncRoute(async (_req, res) => {
+    const adapter = connectionManager.requireAdapter();
+    sendOk(res, { players: await findPlayers(adapter) });
+  }),
+);
+
+/**
+ * Plays a sound that already lives on the station. Nothing is written anywhere, so the clip never
+ * ends up in the station's own library.
+ */
+audioRouter.post(
+  '/play',
+  asyncRoute(async (req, res) => {
+    const parsed = z.object({ path: z.string().min(1).max(500) }).strict().safeParse(req.body);
+    if (!parsed.success) throw new AccError('BAD_REQUEST', 'Нужен путь к звуку на станции', 400);
+    const remotePath = assertSoundPath(parsed.data.path);
+    const adapter = connectionManager.requireAdapter();
+    const player = await playDeviceFile(adapter, remotePath);
+    eventLog.append({
+      level: 'info',
+      module: 'audio',
+      operation: 'play',
+      result: 'ok',
+      message: `Играем ${remotePath.split('/').pop() ?? 'звук'}`,
+      details: { player, path: remotePath },
+    });
+    sendOk(res, { player, path: remotePath });
+  }),
+);
+
+/**
+ * Speaks a line through the configured AI server. The clip goes to /tmp, plays, and the same
+ * remote command deletes it — the station keeps nothing.
+ */
+audioRouter.post(
+  '/say',
+  asyncRoute(async (req, res) => {
+    const parsed = z
+      .object({ text: z.string().trim().min(1).max(300) })
+      .strict()
+      .safeParse(req.body);
+    if (!parsed.success) {
+      throw new AccError('BAD_REQUEST', 'Текст для озвучки должен быть от 1 до 300 символов', 400);
+    }
+    // Check the station before spending a TTS request on it.
+    const adapter = connectionManager.requireAdapter();
+    const players = await findPlayers(adapter);
+    if (!players.length) {
+      throw new AccError(
+        'NO_AUDIO_PLAYER',
+        'На станции не нашлось плеера (aplay, paplay, ffplay, mpv, gstreamer) — озвучка невозможна.',
+        502,
+      );
+    }
+    const speech = await synthesizeSpeech(parsed.data.text);
+    const player = await playTempAudio(adapter, speech.audio, speech.ext);
+    eventLog.append({
+      level: 'info',
+      module: 'audio',
+      operation: 'say',
+      result: 'ok',
+      message: `Озвучено: ${parsed.data.text.slice(0, 60)}`,
+      details: { player, model: speech.model, voice: speech.voice, bytes: speech.audio.length },
+    });
+    sendOk(res, { player, model: speech.model, voice: speech.voice, bytes: speech.audio.length });
   }),
 );

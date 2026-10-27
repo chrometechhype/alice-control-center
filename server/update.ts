@@ -163,6 +163,45 @@ function releaseAsset(release: GithubRelease): GithubAsset | null {
   return zips.find((asset) => asset.name.includes(version)) ?? zips[0];
 }
 
+const NOTE_HEADING = /исправл|нов|featur|fix|added|changed|улучшен/i;
+
+function cleanBullet(line: string): string {
+  return line
+    .replace(/^[-*+]\s+/, '')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/[`*_]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Release bodies are markdown written for GitHub; the panel shows plain lines. */
+export function summarizeRelease(body: string | null): string[] {
+  if (!body) return [];
+  const lines = body.split(/\r?\n/);
+  const bullets: string[] = [];
+  let inCode = false;
+  let inPreferred = false;
+  for (const line of lines) {
+    if (line.trim().startsWith('```')) {
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode) continue;
+    const heading = /^#{1,6}\s+(.*)$/.exec(line.trim());
+    if (heading) {
+      inPreferred = NOTE_HEADING.test(heading[1]);
+      continue;
+    }
+    const bullet = cleanBullet(line);
+    if (!bullet || bullet.length < 12) continue;
+    if (line.trim().startsWith('-') || line.trim().startsWith('*')) {
+      if (inPreferred || !bullets.length) bullets.push(bullet.slice(0, 220));
+    }
+  }
+  return [...new Set(bullets)].slice(0, 6);
+}
+
 async function buildInfo(release: GithubRelease): Promise<CachedUpdate> {
   const version = currentVersion();
   const latest = release.tag_name.replace(/^v/, '');
@@ -176,17 +215,36 @@ async function buildInfo(release: GithubRelease): Promise<CachedUpdate> {
     repo: UPDATE_REPO,
     releaseUrl: release.html_url,
     notes: (release.body ?? '').slice(0, 8000),
+    highlights: summarizeRelease(release.body),
+    assetSizeBytes: asset?.size ?? null,
     publishedAt: release.published_at,
     checkedAt: Date.now(),
     assetName: asset?.name ?? null,
   };
 }
 
+/**
+ * The cached record is only trusted for the *latest* version it saw. Comparing it against a
+ * stale `currentVersion` is what made the panel shout "есть новая" right after a successful
+ * update to that very version.
+ */
+function withLiveVersion(info: CachedUpdate): UpdateInfo {
+  const version = currentVersion();
+  const latest = info.latestVersion;
+  return {
+    ...info,
+    currentVersion: version,
+    updateAvailable: Boolean(latest) && compareVersions(latest as string, version) > 0,
+    // Caches written by older builds have no highlights.
+    highlights: Array.isArray(info.highlights) ? info.highlights : [],
+  };
+}
+
 export async function checkForUpdates(force = false): Promise<UpdateInfo> {
   const cached = readCache();
   const now = Date.now();
-  if (!force && cached?.checkedAt && now - cached.checkedAt < CACHE_TTL_MS) return cached;
-  if (force && cached?.checkedAt && now - cached.checkedAt < MIN_FORCE_INTERVAL_MS) return cached;
+  if (!force && cached?.checkedAt && now - cached.checkedAt < CACHE_TTL_MS) return withLiveVersion(cached);
+  if (force && cached?.checkedAt && now - cached.checkedAt < MIN_FORCE_INTERVAL_MS) return withLiveVersion(cached);
   if (inFlight) return inFlight;
   inFlight = (async () => {
     try {
@@ -197,7 +255,7 @@ export async function checkForUpdates(force = false): Promise<UpdateInfo> {
     } catch (error) {
       if (cached) {
         return {
-          ...cached,
+          ...withLiveVersion(cached),
           checkError: error instanceof Error ? error.message : 'Не удалось проверить обновления',
         } satisfies UpdateInfo;
       }
@@ -210,6 +268,8 @@ export async function checkForUpdates(force = false): Promise<UpdateInfo> {
         repo: UPDATE_REPO,
         releaseUrl: null,
         notes: '',
+        highlights: [],
+        assetSizeBytes: null,
         publishedAt: null,
         checkedAt: null,
         checkError: message,
