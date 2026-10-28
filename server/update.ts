@@ -11,6 +11,8 @@ import { shutdownForUpdate } from './lifecycle.ts';
 
 export const UPDATE_REPO = process.env.ACC_GITHUB_REPO?.trim() || 'chrometechhype/alice-control-center';
 const API_BASE = 'https://api.github.com';
+const WEB_BASE = 'https://github.com';
+const RAW_BASE = 'https://raw.githubusercontent.com';
 const CACHE_TTL_MS = 15 * 60_000;
 const MIN_FORCE_INTERVAL_MS = 60_000;
 const MAX_ZIP_BYTES = 80 * 1024 * 1024;
@@ -24,7 +26,7 @@ const stagingRoot = path.join(updatesDir, 'staging');
 
 interface GithubAsset {
   name: string;
-  size: number;
+  size?: number | null;
   browser_download_url: string;
   digest?: string | null;
 }
@@ -124,6 +126,14 @@ function releaseHeaders(): HeadersInit {
   };
 }
 
+/** Node hides the real reason inside `cause`; the code is what the tester can report. */
+function networkCode(error: unknown): string {
+  const record = error as { name?: string; cause?: { code?: unknown } } | null;
+  if (record?.name === 'AbortError') return 'timeout';
+  const code = record?.cause?.code;
+  return typeof code === 'string' && /^[A-Z_]{3,40}$/i.test(code) ? code : '';
+}
+
 async function githubJson(url: string, timeoutMs = 15_000): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -141,9 +151,10 @@ async function githubJson(url: string, timeoutMs = 15_000): Promise<unknown> {
     return await response.json();
   } catch (error) {
     if (error instanceof AccError) throw error;
+    const code = networkCode(error);
     throw new AccError(
       'UPDATE_CHECK_FAILED',
-      'Не удалось проверить обновления. Проверьте интернет и повторите позже.',
+      `Не удалось связаться с API GitHub${code ? ` (${code})` : ''}. Проверьте интернет и повторите позже.`,
       502,
     );
   } finally {
@@ -151,9 +162,125 @@ async function githubJson(url: string, timeoutMs = 15_000): Promise<unknown> {
   }
 }
 
+async function request(url: string, init: { timeoutMs?: number; method?: string } = {}): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? 15_000);
+  try {
+    return await fetch(url, {
+      method: init.method ?? 'GET',
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Alice-Control-Center', Accept: '*/*' },
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function discard(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined);
+}
+
+function tagFromReleaseUrl(url: string): string | null {
+  const match = /\/releases\/tag\/([^/?#]+)/.exec(url);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}
+
+async function remoteSize(url: string): Promise<number | null> {
+  try {
+    const response = await request(url, { method: 'HEAD', timeoutMs: 8000 });
+    await discard(response);
+    const length = Number(response.headers.get('content-length') ?? 0);
+    return response.ok && length > 0 ? length : null;
+  } catch {
+    return null;
+  }
+}
+
+async function releaseNotesFromTag(tag: string): Promise<string | null> {
+  const version = tag.replace(/^v/, '');
+  try {
+    const response = await request(
+      `${RAW_BASE}/${UPDATE_REPO}/${encodeURIComponent(tag)}/docs/release-notes/${encodeURIComponent(version)}.md`,
+      { timeoutMs: 10_000 },
+    );
+    if (!response.ok) {
+      await discard(response);
+      return null;
+    }
+    return (await response.text()).slice(0, 8000);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `api.github.com` is blocked on some networks while `github.com` itself still loads, so the
+ * release is rebuilt from the tag the web redirect lands on. Assets follow the packaging
+ * naming convention, and the notes come from the repository instead of the release body.
+ */
+async function fetchLatestReleaseViaWeb(): Promise<GithubRelease> {
+  const start = `${WEB_BASE}/${UPDATE_REPO}/releases/latest`;
+  const response = await request(start, { timeoutMs: 20_000 });
+  const finalUrl = response.url || start;
+  await discard(response);
+  if (!response.ok) {
+    throw new AccError('UPDATE_CHECK_FAILED', `github.com ответил ошибкой ${response.status}.`, 502);
+  }
+  const tag = tagFromReleaseUrl(finalUrl);
+  if (!tag) {
+    throw new AccError('UPDATE_CHECK_FAILED', 'Страница релизов не сообщила номер версии.', 502);
+  }
+  const version = tag.replace(/^v/, '');
+  const assetName = `Alice-Control-Center-${version}.zip`;
+  const downloadBase = `${WEB_BASE}/${UPDATE_REPO}/releases/download/${encodeURIComponent(tag)}/`;
+  const [size, notes] = await Promise.all([
+    remoteSize(`${downloadBase}${assetName}`),
+    releaseNotesFromTag(tag),
+  ]);
+  return {
+    tag_name: tag,
+    name: null,
+    html_url: finalUrl,
+    body: notes,
+    published_at: null,
+    draft: false,
+    prerelease: false,
+    assets: [
+      { name: assetName, size, browser_download_url: `${downloadBase}${assetName}` },
+      {
+        name: `${assetName}.sha256`,
+        size: null,
+        browser_download_url: `${downloadBase}${assetName}.sha256`,
+      },
+    ],
+  };
+}
+
 async function fetchLatestRelease(): Promise<GithubRelease> {
-  const payload = await githubJson(`${API_BASE}/repos/${UPDATE_REPO}/releases/latest`);
-  return payload as GithubRelease;
+  try {
+    const payload = await githubJson(`${API_BASE}/repos/${UPDATE_REPO}/releases/latest`);
+    return payload as GithubRelease;
+  } catch (apiError) {
+    if (apiError instanceof AccError && apiError.message === 'Релизы проекта пока не опубликованы.') {
+      throw apiError;
+    }
+    try {
+      return await fetchLatestReleaseViaWeb();
+    } catch {
+      const code = networkCode(apiError);
+      throw new AccError(
+        'UPDATE_CHECK_FAILED',
+        `GitHub недоступен из этой сети${code ? ` (${code})` : ''}: не ответили ни api.github.com, ни github.com. Проверьте интернет или VPN и повторите.`,
+        502,
+      );
+    }
+  }
 }
 
 function releaseAsset(release: GithubRelease): GithubAsset | null {

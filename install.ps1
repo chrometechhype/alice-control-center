@@ -79,27 +79,75 @@ function Install-AliceControlCenter {
 
   $headers = @{ 'User-Agent' = 'acc-installer'; 'Accept' = 'application/vnd.github+json' }
   $releaseUrl = if ($tag) {
-    Write-Host "Fetching release $tag..."
     "https://api.github.com/repos/$repo/releases/tags/$tag"
   } else {
-    Write-Host 'Fetching the latest release...'
     "https://api.github.com/repos/$repo/releases/latest"
   }
-  $release = Invoke-RestMethod -Uri $releaseUrl -Headers $headers -TimeoutSec 30
-  $version = $release.tag_name -replace '^v', ''
-  $zipAsset = $release.assets | Where-Object { $_.name -like '*.zip' } | Select-Object -First 1
-  $sumAsset = $release.assets | Where-Object { $_.name -like '*.zip.sha256' } | Select-Object -First 1
-  if (-not $zipAsset) { throw 'The latest release has no ZIP archive.' }
-  if (-not $sumAsset) { throw 'The latest release has no SHA-256 file. Aborting for safety.' }
+  $release = $null
+  $apiError = $null
+  try {
+    $release = Invoke-RestMethod -Uri $releaseUrl -Headers $headers -TimeoutSec 30
+  } catch {
+    $apiError = $_
+  }
+
+  # api.github.com is blocked on some networks while github.com itself still works, so the
+  # release is resolved from the web page redirect and the assets follow the naming convention.
+  if (-not $release) {
+    $status = $null
+    if ($apiError -and $apiError.Exception.Response) {
+      try { $status = [int]$apiError.Exception.Response.StatusCode } catch { }
+    }
+    if ($status -eq 404) {
+      if ($tag) { throw "Release $tag was not found." }
+      throw 'No releases are published yet.'
+    }
+    Write-Host 'The GitHub API is not reachable, asking github.com instead...'
+    $page = if ($tag) { "https://github.com/$repo/releases/tag/$tag" } else { "https://github.com/$repo/releases/latest" }
+    $response = $null
+    try {
+      $response = Invoke-WebRequest -Uri $page -UseBasicParsing -MaximumRedirection 5 -TimeoutSec 30
+    } catch {
+      throw 'GitHub is not reachable from this network. Check your internet or VPN and run the installer again.'
+    }
+    $resolvedTag = $tag
+    if (-not $resolvedTag) {
+      $finalUri = $null
+      if ($response.BaseResponse.ResponseUri) {
+        $finalUri = $response.BaseResponse.ResponseUri.AbsoluteUri
+      } elseif ($response.BaseResponse.RequestMessage) {
+        $finalUri = $response.BaseResponse.RequestMessage.RequestUri.AbsoluteUri
+      }
+      if ($finalUri -match '/releases/tag/([^/?#]+)') {
+        $resolvedTag = [System.Uri]::UnescapeDataString($Matches[1])
+      }
+    }
+    if (-not $resolvedTag) {
+      throw 'Could not determine the latest release tag from github.com.'
+    }
+    $version = $resolvedTag -replace '^v', ''
+    $zipName = "Alice-Control-Center-$version.zip"
+    $zipUrl = "https://github.com/$repo/releases/download/$resolvedTag/$zipName"
+    $sumUrl = "$zipUrl.sha256"
+  } else {
+    $version = $release.tag_name -replace '^v', ''
+    $zipAsset = $release.assets | Where-Object { $_.name -like '*.zip' } | Select-Object -First 1
+    $sumAsset = $release.assets | Where-Object { $_.name -like '*.zip.sha256' } | Select-Object -First 1
+    if (-not $zipAsset) { throw 'The latest release has no ZIP archive.' }
+    if (-not $sumAsset) { throw 'The latest release has no SHA-256 file. Aborting for safety.' }
+    $zipName = $zipAsset.name
+    $zipUrl = $zipAsset.browser_download_url
+    $sumUrl = $sumAsset.browser_download_url
+  }
 
   $temp = Join-Path ([System.IO.Path]::GetTempPath()) ("acc-install-" + [guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Path $temp | Out-Null
 
   try {
-    $zipPath = Join-Path $temp $zipAsset.name
-    Write-Host "Downloading $($zipAsset.name) ($version)..."
-    Invoke-WebRequest -Uri $zipAsset.browser_download_url -OutFile $zipPath -UseBasicParsing
-    $sumResponse = Invoke-WebRequest -Uri $sumAsset.browser_download_url -UseBasicParsing
+    $zipPath = Join-Path $temp $zipName
+    Write-Host "Downloading $zipName ($version)..."
+    Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing
+    $sumResponse = Invoke-WebRequest -Uri $sumUrl -UseBasicParsing
     $sumText = if ($sumResponse.Content -is [byte[]]) {
       [System.Text.Encoding]::UTF8.GetString($sumResponse.Content)
     } else {

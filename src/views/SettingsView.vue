@@ -974,7 +974,18 @@ onMounted(() => {
           <UpdateNotes v-else-if="updateStore.info?.updateAvailable" class="mt-12" />
           <div v-else-if="updateStore.info?.checkError" class="alert alert--warn mt-12">
             <AlertTriangle :size="15" />
-            <div>{{ updateStore.info.checkError }}</div>
+            <div>
+              {{ updateStore.info.checkError }}
+              <div class="mt-8">
+                <a
+                  :href="`https://github.com/${updateStore.info?.repo ?? 'chrometechhype/alice-control-center'}/releases/latest`"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Открыть страницу релизов
+                </a>
+              </div>
+            </div>
           </div>
           <div v-else-if="updateStore.info?.reason" class="alert alert--warn mt-12">
             <AlertTriangle :size="15" />
