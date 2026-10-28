@@ -71,18 +71,51 @@ export function currentVersion(): string {
   }
 }
 
-function parseVersion(value: string): [number, number, number] | null {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(value.trim());
-  if (!match) return null;
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
+interface ParsedVersion {
+  core: [number, number, number];
+  prerelease: string[];
 }
 
+function parseVersion(value: string): ParsedVersion | null {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(
+    value.trim(),
+  );
+  if (!match) return null;
+  return {
+    core: [Number(match[1]), Number(match[2]), Number(match[3])],
+    prerelease: match[4] ? match[4].split('.') : [],
+  };
+}
+
+/**
+ * Semver precedence, prerelease included: 1.0.0-alpha.3 < 1.0.0-alpha.4 < 1.0.0-beta < 1.0.0.
+ * Dropping the suffix compared every `1.0.0-alpha.N` as plain 1.0.0, so an alpha.3 panel was told it
+ * already had alpha.4 and the install button never downloaded anything.
+ */
 export function compareVersions(a: string, b: string): number {
   const left = parseVersion(a);
   const right = parseVersion(b);
   if (!left || !right) return 0;
   for (let index = 0; index < 3; index += 1) {
-    if (left[index] !== right[index]) return left[index] > right[index] ? 1 : -1;
+    if (left.core[index] !== right.core[index]) return left.core[index] > right.core[index] ? 1 : -1;
+  }
+  if (!left.prerelease.length && !right.prerelease.length) return 0;
+  if (!left.prerelease.length) return 1;
+  if (!right.prerelease.length) return -1;
+  const length = Math.max(left.prerelease.length, right.prerelease.length);
+  for (let index = 0; index < length; index += 1) {
+    const one = left.prerelease[index];
+    const two = right.prerelease[index];
+    if (one === undefined) return -1;
+    if (two === undefined) return 1;
+    if (one === two) continue;
+    const oneNumeric = /^\d+$/.test(one);
+    const twoNumeric = /^\d+$/.test(two);
+    if (oneNumeric && twoNumeric) return Number(one) > Number(two) ? 1 : -1;
+    // A numeric identifier always has lower precedence than an alphanumeric one.
+    if (oneNumeric) return -1;
+    if (twoNumeric) return 1;
+    return one > two ? 1 : -1;
   }
   return 0;
 }
