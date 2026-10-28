@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import {
   AlertTriangle,
   Check,
+  Eraser,
   Info,
   Lightbulb,
   LoaderCircle,
@@ -35,12 +36,20 @@ interface LedZoneView {
   greenValue: number | null;
   blueValue: number | null;
   trigger: string | null;
+  /** Channel nodes the firmware does not expose — that ring ignores those colours. */
+  missing?: string[];
+}
+
+interface LedPower {
+  on: boolean;
+  colors: number[][] | null;
 }
 
 interface LedStatus {
   available: boolean;
   zones: LedZoneView[];
   animation: { running: boolean };
+  power: LedPower;
   presets: LedPreset[];
 }
 
@@ -72,6 +81,8 @@ const ledKind = computed(() => String(ledCap.value?.details?.kind ?? 'sysfs'));
 const zones = computed(() => status.value?.zones ?? []);
 const presets = computed(() => status.value?.presets ?? []);
 const zoneCount = computed(() => zones.value.length);
+const powerOn = computed(() => status.value?.power.on !== false);
+const savedColors = computed(() => status.value?.power.colors ?? null);
 
 function stopLocalAnimationTimer(): void {
   if (animationTimer) {
@@ -144,10 +155,17 @@ async function applySelected(): Promise<void> {
   busy.value = true;
   error.value = '';
   try {
-    await api.post('/led/apply', { zones: colors.value.map((_, index) => rgbAt(index)) });
+    const result = await api.post<{ warning?: string }>('/led/apply', {
+      zones: colors.value.map((_, index) => rgbAt(index)),
+    });
     stopLocalAnimationTimer();
     animationRunning.value = false;
-    pushToast('ok', 'Цвета применены к LED-кольцу');
+    if (result.warning) {
+      error.value = result.warning;
+      pushToast('error', result.warning);
+    } else {
+      pushToast('ok', 'Цвета применены к LED-кольцу');
+    }
     await load();
   } catch (caught) {
     error.value = errorMessage(caught);
@@ -157,14 +175,20 @@ async function applySelected(): Promise<void> {
   }
 }
 
-async function turnOff(): Promise<void> {
+async function togglePower(): Promise<void> {
   busy.value = true;
   error.value = '';
   try {
-    await api.post('/led/off');
-    stopLocalAnimationTimer();
-    animationRunning.value = false;
-    pushToast('info', 'LED-кольцо выключено');
+    if (powerOn.value) {
+      await api.post('/led/off');
+      stopLocalAnimationTimer();
+      animationRunning.value = false;
+      pushToast('info', 'LED-кольцо выключено');
+    } else {
+      const result = await api.post<{ message?: string; warning?: string }>('/led/on');
+      pushToast(result.warning ? 'error' : 'ok', result.warning ?? result.message ?? 'LED-кольцо включено');
+      if (!result.warning) await load();
+    }
     await load();
   } catch (caught) {
     error.value = errorMessage(caught);
@@ -172,6 +196,47 @@ async function turnOff(): Promise<void> {
   } finally {
     busy.value = false;
   }
+}
+
+/** An effect that has ended must not stay frozen on its last frame. */
+async function resetEffect(): Promise<void> {
+  busy.value = true;
+  error.value = '';
+  try {
+    const result = await api.post<{ stopped: boolean }>('/led/reset');
+    stopLocalAnimationTimer();
+    animationRunning.value = false;
+    pushToast(
+      'ok',
+      result.stopped
+        ? 'Эффект остановлен, кольцо вернулось к цвету до анимации'
+        : 'Кольцо сброшено к сохранённому цвету',
+    );
+    await load();
+  } catch (caught) {
+    error.value = errorMessage(caught);
+    pushToast('error', error.value);
+  } finally {
+    busy.value = false;
+  }
+}
+
+/**
+ * Lights one ring at a time in its own colour, so «среднее кольцо игнорится» becomes a fact: either
+ * the ring answers and the zones are mapped by number, or it stays dark and that zone is dead.
+ */
+function ringTest(): Promise<void> {
+  const palette: Array<[number, number, number]> = [
+    [255, 40, 40],
+    [40, 255, 40],
+    [70, 130, 255],
+  ];
+  const black: [number, number, number] = [0, 0, 0];
+  const frames = zones.value.map((_, index) => {
+    const on = palette[index % palette.length];
+    return zones.value.map((__, other) => (other === index ? [...on] : [...black]) as [number, number, number]);
+  });
+  return runAnimation(frames, 1, 1);
 }
 
 async function restoreNative(): Promise<void> {
@@ -309,9 +374,25 @@ onBeforeUnmount(stopLocalAnimationTimer);
           <RefreshCw :size="15" :class="{ spin: loading }" />
           Обновить
         </button>
-        <button class="btn" :disabled="busy || !ledAvailable" @click="turnOff">
+        <button
+          class="btn"
+          :class="{ 'btn--primary': !powerOn }"
+          :disabled="busy || !ledAvailable"
+          :title="
+            powerOn
+              ? 'Погасить кольцо'
+              : savedColors
+                ? 'Вернуть последние применённые цвета'
+                : 'Вернуть штатную индикацию Алисы'
+          "
+          @click="togglePower"
+        >
           <Power :size="15" />
-          Выключить
+          {{ powerOn ? 'Выключить' : 'Включить' }}
+        </button>
+        <button class="btn" :disabled="busy || !ledAvailable" @click="resetEffect">
+          <Eraser :size="15" />
+          Сброс
         </button>
         <button class="btn btn--soft" :disabled="busy || !ledAvailable" @click="restoreOpen = true">
           <RotateCcw :size="15" />
@@ -366,6 +447,9 @@ onBeforeUnmount(stopLocalAnimationTimer);
             <div class="card-sub">Выберите цвет для каждой зоны и примените его к устройству.</div>
           </div>
           <span v-if="zones[0]?.trigger" class="pill pill--muted mono">{{ zones[0].trigger }}</span>
+          <span class="pill" :class="powerOn ? 'pill--ok' : 'pill--muted'">
+            {{ powerOn ? 'кольцо включено' : 'кольцо выключено' }}
+          </span>
         </div>
 
         <div v-if="loading && !status" class="empty" style="padding: 34px">
@@ -407,6 +491,10 @@ onBeforeUnmount(stopLocalAnimationTimer);
             <Palette v-else :size="15" />
             Применить цвета
           </button>
+          <button class="btn" :disabled="busy || !zoneCount" @click="ringTest">
+            <Lightbulb :size="15" />
+            Проверить кольца
+          </button>
           <button class="btn" :disabled="busy || !zoneCount" @click="blink">
             <Play :size="15" />
             Мигнуть
@@ -421,12 +509,23 @@ onBeforeUnmount(stopLocalAnimationTimer);
           </button>
         </div>
 
+        <div v-if="zones.some((zone) => zone.missing?.length)" class="alert alert--warn mt-12">
+          <AlertTriangle :size="15" />
+          <div>
+            У некоторых зон прошивка не отдаёт все каналы:
+            <span v-for="zone in zones.filter((item) => item.missing?.length)" :key="zone.index">
+              зона {{ zone.index + 1 }} — {{ zone.missing?.join(', ') }}.
+            </span>
+            Такие зоны не примут этот цвет, и панель скажет об этом прямо, а не покажет «применено».
+          </div>
+        </div>
+
         <div class="alert alert--info mt-12">
           <Info :size="15" />
           <div>
-            ACC пишет цвета напрямую в sysfs. Штатная индикация Алисы возвращается кнопкой
-            «Штатный режим» — она переключает триггер обратно на
-            <span class="code-inline">led_ring_fb</span>.
+            «Проверить кольца» зажигает кольца по одному: зона 1 — красным, зона 2 — зелёным,
+            зона 3 — синим. Так видно, какая физическая зона какой номер носит. «Сброс» гасит эффект
+            и возвращает кольцу цвет, который был до анимации.
           </div>
         </div>
       </article>
@@ -445,6 +544,7 @@ onBeforeUnmount(stopLocalAnimationTimer);
 
         <EmptyState
           v-if="!presets.length"
+          compact
           title="Пресетов пока нет"
           text="Настройте цвета зон и сохраните их как пресет — он появится здесь."
         >

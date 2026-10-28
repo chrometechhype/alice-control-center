@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router';
 import {
   AlertTriangle,
   Check,
+  Eraser,
   Info,
   Lightbulb,
   LoaderCircle,
@@ -75,6 +76,7 @@ const busyScene = ref('');
 const error = ref('');
 const restoreOpen = ref(false);
 const busy = ref(false);
+const powerOn = ref(true);
 const LOOP_KEY = 'acc-fun-loop';
 function readLoop(): boolean {
   try {
@@ -253,7 +255,10 @@ async function loadPresets(): Promise<void> {
 
 onMounted(() => {
   void loadAiSettings();
-  if (ledAvailable.value) void loadPresets();
+  if (ledAvailable.value) {
+    void loadPresets();
+    void loadPower();
+  }
 });
 
 async function runScene(scene: Scene): Promise<void> {
@@ -290,11 +295,51 @@ async function turnOff(): Promise<void> {
   busy.value = true;
   try {
     await api.post('/led/off');
+    powerOn.value = false;
     pushToast('info', 'LED-кольцо выключено');
   } catch (caught) {
     pushToast('error', errorMessage(caught));
   } finally {
     busy.value = false;
+  }
+}
+
+async function turnOn(): Promise<void> {
+  busy.value = true;
+  try {
+    const result = await api.post<{ message?: string; warning?: string }>('/led/on');
+    powerOn.value = true;
+    pushToast(result.warning ? 'error' : 'ok', result.warning ?? result.message ?? 'LED-кольцо включено');
+  } catch (caught) {
+    pushToast('error', errorMessage(caught));
+  } finally {
+    busy.value = false;
+  }
+}
+
+function togglePower(): Promise<void> {
+  return powerOn.value ? turnOff() : turnOn();
+}
+
+/** Ends the effect and puts the ring back where it was — the last frame no longer stays lit. */
+async function resetEffect(): Promise<void> {
+  busy.value = true;
+  try {
+    await api.post('/led/reset');
+    pushToast('ok', 'Эффект сброшен: кольцо вернулось к цвету до анимации');
+  } catch (caught) {
+    pushToast('error', errorMessage(caught));
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function loadPower(): Promise<void> {
+  try {
+    const result = await api.get<{ power?: { on: boolean } }>('/led/status');
+    powerOn.value = result.power?.on !== false;
+  } catch {
+    powerOn.value = true;
   }
 }
 
@@ -323,9 +368,13 @@ async function restoreNative(): Promise<void> {
         </p>
       </div>
       <div class="page-head__actions">
-        <button class="btn" :disabled="busy || !ledAvailable" @click="turnOff">
+        <button class="btn" :class="{ 'btn--primary': !powerOn }" :disabled="busy || !ledAvailable" @click="togglePower">
           <Power :size="15" />
-          Выключить
+          {{ powerOn ? 'Выключить' : 'Включить' }}
+        </button>
+        <button class="btn" :disabled="busy || !ledAvailable" @click="resetEffect">
+          <Eraser :size="15" />
+          Сброс
         </button>
         <button class="btn btn--soft" :disabled="busy || !ledAvailable" @click="restoreOpen = true">
           <RotateCcw :size="15" />
@@ -497,6 +546,7 @@ async function restoreNative(): Promise<void> {
           <div class="form-grid mt-12">
             <div class="info-line"><Zap :size="14" /><span>Анимация целиком выполняется на колонке, без канала SSH на каждый кадр.</span></div>
             <div class="info-line"><Lightbulb :size="14" /><span>Цвета применяются ко всем доступным зонам кольца.</span></div>
+            <div class="info-line"><Eraser :size="14" /><span>Сцена закончилась — кольцо возвращается к цвету до неё, а не застывает на последнем кадре.</span></div>
             <div class="info-line"><RotateCcw :size="14" /><span>«Штатный режим» возвращает триггер led_ring_fb.</span></div>
             <div class="info-line"><Check :size="14" /><span>Сцены не перезапускают станцию и не меняют прошивку.</span></div>
           </div>
@@ -507,7 +557,7 @@ async function restoreNative(): Promise<void> {
           <ul class="check-list mt-12">
             <li><Info :size="14" /><span>Нет синхронизации с музыкой: ACC не выдаёт желаемое за реальное.</span></li>
             <li><Info :size="14" /><span>Выше 30 fps кольцо может обновляться неравномерно — это ограничение прошивки, а не SSH.</span></li>
-            <li><Info :size="14" /><span>«Выключить» и «Штатный режим» останавливают эффект на устройстве.</span></li>
+            <li><Info :size="14" /><span>«Сброс», «Выключить» и «Штатный режим» останавливают эффект на устройстве.</span></li>
           </ul>
           <div class="alert alert--info mt-12">
             <Info :size="15" />

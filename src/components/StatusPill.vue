@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { ConnectionState } from '@shared/types';
+import type { ConnectionState, StabilitySnapshot } from '@shared/types';
 
-const props = defineProps<{ state: ConnectionState; compact?: boolean }>();
+const props = defineProps<{
+  state: ConnectionState;
+  compact?: boolean;
+  stability?: StabilitySnapshot;
+}>();
 
 const titles: Record<ConnectionState, string> = {
   connected: 'Колонка на связи',
@@ -11,6 +15,22 @@ const titles: Record<ConnectionState, string> = {
   error: 'Подключение не удалось',
   disconnected: 'Колонка не подключена',
 };
+
+/**
+ * «Подключено» is not the whole truth when the station keeps dropping the transport: say that the
+ * link is strained and that the panel has deliberately slowed down, instead of looking healthy.
+ */
+const title = computed(() => {
+  const stability = props.stability;
+  if (props.state !== 'connected' || !stability || stability.mode === 'stable') {
+    return titles[props.state];
+  }
+  const every = Math.round(stability.pollIntervalMs / 1000);
+  if (stability.mode === 'unstable') {
+    return `Колонка перегружена: обрывов за 3 мин — ${stability.drops}. Панель опрашивает её раз в ${every} с, чтобы не мешать.`;
+  }
+  return `Связь нестабильна: обрывов за 3 мин — ${stability.drops}. Панель снизила частоту опроса до ${every} с.`;
+});
 
 // «compact» is for the sidebar, where the row shares 230 px with the live indicator and two buttons.
 const label = computed(() => {
@@ -44,7 +64,7 @@ const tone = computed(() => {
 </script>
 
 <template>
-  <span class="pill" :class="`pill--${tone}`" :title="titles[props.state]">
+  <span class="pill" :class="`pill--${tone}`" :title="title">
     <span class="dot" :class="{ 'dot--live': state === 'connected' }" />
     <span class="status-label">{{ label }}</span>
   </span>

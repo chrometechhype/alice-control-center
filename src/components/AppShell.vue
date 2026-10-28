@@ -163,7 +163,7 @@ async function refresh(): Promise<void> {
 
       <div class="sidebar-controls">
         <div class="sidebar-controls__status">
-          <StatusPill :state="store.status.state" compact />
+          <StatusPill :state="store.status.state" :stability="store.status.stability" compact />
           <span class="pill topbar-ws" :class="wsTone" :title="`WebSocket: ${store.wsState}`">
             <Wifi :size="13" />
             {{ wsLabel }}
@@ -270,7 +270,7 @@ async function refresh(): Promise<void> {
             <Wifi :size="13" />
             {{ wsLabel }}
           </span>
-          <StatusPill :state="store.status.state" />
+          <StatusPill :state="store.status.state" :stability="store.status.stability" />
           <button
             type="button"
             class="btn btn--icon btn--sm"

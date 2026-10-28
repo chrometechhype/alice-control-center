@@ -290,13 +290,14 @@ onMounted(() => {
 
           <EmptyState
             v-else-if="!devices.length"
+            compact
             title="Устройств не найдено"
             text="Запустите сканирование. ACC покажет только устройства, которые вернул bluetoothctl."
           >
             <template #icon><BluetoothSearching :size="20" /></template>
           </EmptyState>
 
-          <div v-else class="list">
+          <div v-else class="list scroll-pane">
             <div v-for="device in devices" :key="device.address" class="bt-device">
               <div class="bt-icon" :class="{ connected: device.connected }">
                 <BluetoothConnected v-if="device.connected" :size="17" />
@@ -367,6 +368,9 @@ onMounted(() => {
             <div class="kv mt-12">
               <div class="kv-row"><span class="kv-key">Имя</span><span class="kv-value">{{ controllerName }}</span></div>
               <div class="kv-row"><span class="kv-key">Адрес</span><span class="kv-value mono">{{ controller?.address || '—' }}</span></div>
+              <div class="kv-row"><span class="kv-key">В поиске</span><span class="kv-value">{{ controller?.discoverable === null ? '—' : controller?.discoverable ? 'да' : 'нет' }}</span></div>
+              <div class="kv-row"><span class="kv-key">Сопряжение</span><span class="kv-value">{{ controller?.pairable === null ? '—' : controller?.pairable ? 'разрешено' : 'запрещено' }}</span></div>
+              <div class="kv-row"><span class="kv-key">Адаптер</span><span class="kv-value mono">{{ controller?.adapter || '—' }}</span></div>
             </div>
             <button
               class="btn btn--soft mt-12"
@@ -381,32 +385,6 @@ onMounted(() => {
               Режим остаётся включённым, пока вы его не выключите. Для безопасности не оставляйте
               станцию видимой в общественных сетях.
             </p>
-          </article>
-
-          <article class="card">
-            <div class="card-title"><Bluetooth :size="15" /> Контроллер</div>
-            <div class="kv mt-12">
-              <div class="kv-row"><span class="kv-key">Адаптер</span><span class="kv-value mono">{{ controller?.adapter || '—' }}</span></div>
-              <div class="kv-row"><span class="kv-key">Имя</span><span class="kv-value">{{ controller?.name || '—' }}</span></div>
-              <div class="kv-row"><span class="kv-key">Alias</span><span class="kv-value">{{ controller?.alias || '—' }}</span></div>
-              <div class="kv-row"><span class="kv-key">Адрес</span><span class="kv-value mono">{{ controller?.address || '—' }}</span></div>
-              <div class="kv-row">
-                <span class="kv-key">Питание</span>
-                <span class="kv-value">
-                  <span class="pill" :class="controller?.powered ? 'pill--ok' : 'pill--muted'">
-                    {{ controller?.powered === null ? 'неизвестно' : controller?.powered ? 'включено' : 'выключено' }}
-                  </span>
-                </span>
-              </div>
-              <div class="kv-row">
-                <span class="kv-key">Discoverable</span>
-                <span class="kv-value">{{ controller?.discoverable === null ? '—' : controller?.discoverable ? 'да' : 'нет' }}</span>
-              </div>
-              <div class="kv-row">
-                <span class="kv-key">Pairable</span>
-                <span class="kv-value">{{ controller?.pairable === null ? '—' : controller?.pairable ? 'да' : 'нет' }}</span>
-              </div>
-            </div>
           </article>
 
           <article class="card card--soft">

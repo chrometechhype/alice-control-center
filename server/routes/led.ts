@@ -2,14 +2,22 @@ import fs from 'node:fs';
 import { Router } from 'express';
 import { z } from 'zod';
 import type { LedPreset } from '../../shared/types.ts';
-import { ACTION_READY_WAIT_MS, connectionManager } from '../connection.ts';
+import { connectionManager } from '../connection.ts';
 import { ledPresetsFile } from '../config.ts';
 import { AccError } from '../errors.ts';
 import { eventLog } from '../events.ts';
 import { asyncRoute, sendOk } from '../http.ts';
-import { allLedsOff, applyColors, requireZones, zonesFromCapabilities } from '../ledControl.ts';
+import {
+  allLedsOff,
+  applyColors,
+  describeMismatches,
+  ledPowerOn,
+  restoreNative,
+  zonesFromCapabilities,
+} from '../ledControl.ts';
 import { animationStatus, startAnimation, stopAnimation } from '../ledAnimation.ts';
-import { newId, shQuote } from '../util.ts';
+import { ledState } from '../ledState.ts';
+import { newId } from '../util.ts';
 
 export const ledRouter = Router();
 
@@ -69,8 +77,11 @@ ledRouter.get(
         greenValue: leds[zone.green]?.value ?? null,
         blueValue: leds[zone.blue]?.value ?? null,
         trigger: leds[zone.red]?.trigger ?? null,
+        /** A channel the firmware does not expose — the ring silently ignores it. */
+        missing: [zone.red, zone.green, zone.blue].filter((device) => !(device in leds)),
       })),
       animation: animationStatus(),
+      power: ledState(),
       presets: loadPresets(),
     });
   }),
@@ -80,50 +91,71 @@ ledRouter.post(
   '/apply',
   asyncRoute(async (req, res) => {
     const colors = parseApplyBody(req.body);
-    await stopAnimation();
-    await applyColors(colors);
-    sendOk(res, { zones: colors, appliedAt: Date.now() });
+    await stopAnimation({ restore: false });
+    const result = await applyColors(colors);
+    sendOk(res, {
+      zones: result.colors,
+      appliedAt: Date.now(),
+      mismatches: result.mismatches,
+      warning: describeMismatches(result),
+    });
   }),
 );
 
 ledRouter.post(
   '/off',
   asyncRoute(async (_req, res) => {
-    await stopAnimation();
+    await stopAnimation({ restore: false });
     await allLedsOff();
     sendOk(res, { off: true });
+  }),
+);
+
+/**
+ * «Включить» after «Выключить». Nothing in the ring itself remembers the colours, so the panel uses
+ * the ones it wrote last; with no saved colours the honest restore is the native trigger.
+ */
+ledRouter.post(
+  '/on',
+  asyncRoute(async (_req, res) => {
+    await stopAnimation({ restore: false });
+    const outcome = await ledPowerOn();
+    sendOk(res, {
+      on: true,
+      mode: outcome.mode,
+      warning: outcome.result ? describeMismatches(outcome.result) : undefined,
+      message:
+        outcome.mode === 'colors'
+          ? 'LED-кольцо включено: вернул последние цвета'
+          : 'LED-кольцо включено: возвращено штатной индикации Алисы',
+    });
+  }),
+);
+
+/** Stop an effect and put the ring back where it was instead of leaving the last frame frozen. */
+ledRouter.post(
+  '/reset',
+  asyncRoute(async (_req, res) => {
+    const wasRunning = animationStatus().running;
+    await stopAnimation();
+    eventLog.append({
+      level: 'info',
+      module: 'led',
+      operation: 'reset',
+      result: 'ok',
+      message: wasRunning
+        ? 'LED-эффект остановлен, кольцо возвращено к цвету до анимации'
+        : 'LED-кольцо сброшено к сохранённому состоянию',
+    });
+    sendOk(res, { reset: true, stopped: wasRunning, power: ledState() });
   }),
 );
 
 ledRouter.post(
   '/restore',
   asyncRoute(async (_req, res) => {
-    await stopAnimation();
-    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
-    const zones = requireZones();
-    const lines: string[] = [];
-    for (const zone of zones) {
-      for (const device of [zone.red, zone.green, zone.blue]) {
-        const base = `/sys/class/leds/${device}`;
-        lines.push(`echo 0 > ${shQuote(`${base}/brightness`)}`);
-        lines.push(`echo led_ring_fb > ${shQuote(`${base}/trigger`)}`);
-      }
-    }
-    const result = await adapter.exec(lines.join('\n'), { timeoutMs: 8000 });
-    if (result.code !== 0) {
-      throw new AccError(
-        'LED_WRITE_FAILED',
-        result.stderr.trim() || 'Не удалось вернуть управление LED штатному демону',
-        502,
-      );
-    }
-    eventLog.append({
-      level: 'info',
-      module: 'led',
-      operation: 'restore',
-      result: 'ok',
-      message: 'Управление LED возвращено штатному триггеру led_ring_fb',
-    });
+    await stopAnimation({ restore: false });
+    await restoreNative();
     sendOk(res, { restored: true });
   }),
 );

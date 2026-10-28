@@ -746,6 +746,263 @@ onMounted(() => {
         <article class="card">
           <div class="card-head">
             <div>
+              <div class="card-title"><Wand2 :size="15" /> ИИ-генератор</div>
+              <div class="card-sub">Fun Lab и озвучка текста используют выбранный OpenAI-совместимый сервер</div>
+            </div>
+            <span class="pill" :class="ai?.configured ? 'pill--ok' : 'pill--muted'">
+              {{ ai?.configured ? 'готов' : 'не настроен' }}
+            </span>
+          </div>
+
+          <div v-if="aiLoading" class="muted mt-12" style="font-size: 12px">
+            <LoaderCircle :size="13" class="spin" /> Читаем настройки…
+          </div>
+
+          <div v-else class="form-grid mt-12">
+            <div class="row-wrap" style="gap: 12px">
+              <label class="field" style="flex: 1; min-width: 220px">
+                <span class="field-label">Провайдер</span>
+                <select class="select" :value="aiProvider" :disabled="aiSaving" @change="onAiProviderChange">
+                  <option v-for="preset in ai?.presets ?? []" :key="preset.id" :value="preset.id">
+                    {{ preset.label }}
+                  </option>
+                </select>
+              </label>
+              <label class="field" style="flex: 1.4; min-width: 240px">
+                <span class="field-label">Base URL</span>
+                <input
+                  v-model="aiBaseUrl"
+                  class="input"
+                  type="url"
+                  spellcheck="false"
+                  placeholder="https://api.example.com/v1"
+                  :disabled="aiSaving"
+                />
+              </label>
+            </div>
+
+            <label class="field">
+              <span class="field-label">Модель</span>
+              <input
+                v-model="aiModel"
+                class="input"
+                type="text"
+                spellcheck="false"
+                placeholder="gpt-4o-mini"
+                :disabled="aiSaving"
+              />
+            </label>
+
+            <div class="row-wrap" style="gap: 12px">
+              <label class="field" style="flex: 1; min-width: 180px">
+                <span class="field-label">Модель озвучки</span>
+                <input
+                  v-model="aiTtsModel"
+                  class="input"
+                  type="text"
+                  spellcheck="false"
+                  placeholder="tts-1"
+                  :disabled="aiSaving"
+                />
+              </label>
+              <label class="field" style="flex: 1; min-width: 180px">
+                <span class="field-label">Голос</span>
+                <input
+                  v-model="aiTtsVoice"
+                  class="input"
+                  type="text"
+                  spellcheck="false"
+                  placeholder="alloy"
+                  :disabled="aiSaving"
+                />
+              </label>
+            </div>
+
+            <label class="field">
+              <span class="field-label">API-ключ</span>
+              <input
+                v-model="aiApiKey"
+                class="input"
+                type="password"
+                autocomplete="off"
+                :placeholder="
+                  ai?.hasKey
+                    ? 'Ключ сохранён — оставьте поле пустым'
+                    : aiPreset?.requiresKey
+                      ? 'Обязателен для этого провайдера'
+                      : 'Необязательно'
+                "
+                :disabled="aiSaving"
+              />
+            </label>
+
+            <p v-if="aiPreset?.note" class="field-hint">{{ aiPreset.note }}</p>
+            <p class="field-hint">
+              Ключ хранится только в <span class="mono">data/config.json</span> на backend и никогда
+              не отдаётся во frontend. Подходит любой сервер с endpoint
+              <span class="mono">/chat/completions</span>. Озвучка использует
+              <span class="mono">/audio/speech</span>; если его нет, панель говорит голосом Windows —
+              чужой текст голосом Алисы произнести нельзя, он синтезируется в облаке Яндекса.
+            </p>
+
+            <div v-if="aiError" class="alert alert--error">
+              <AlertTriangle :size="15" />
+              <div>{{ aiError }}</div>
+            </div>
+            <div v-if="aiTestReply" class="alert alert--info">
+              <Check :size="15" />
+              <div>ИИ отвечает: {{ aiTestReply }}</div>
+            </div>
+            <div v-if="aiKeyRequired" class="alert alert--warn">
+              <AlertTriangle :size="15" />
+              <div>Для выбранного провайдера нужен API-ключ. Сохраните настройки вместе с ключом.</div>
+            </div>
+
+            <div class="row-wrap" style="gap: 10px">
+              <button
+                type="button"
+                class="btn btn--primary"
+                :disabled="aiSaving || !aiBaseUrl.trim() || !aiModel.trim()"
+                @click="saveAi"
+              >
+                <LoaderCircle v-if="aiSaving" :size="15" class="spin" />
+                <Check v-else :size="15" />
+                Сохранить
+              </button>
+              <button
+                type="button"
+                class="btn btn--soft"
+                :disabled="aiTesting || !ai?.configured"
+                @click="testAi"
+              >
+                <LoaderCircle v-if="aiTesting" :size="15" class="spin" />
+                <Wand2 v-else :size="15" />
+                {{ aiTesting ? 'Проверяем…' : 'Проверить' }}
+              </button>
+              <button
+                type="button"
+                class="btn btn--soft"
+                :disabled="speaking || !ai?.configured || !isConnected"
+                :title="isConnected ? 'Колонка произнесёт пробу и тут же удалит файл' : 'Нужно подключение к станции'"
+                @click="testSpeech"
+              >
+                <LoaderCircle v-if="speaking" :size="15" class="spin" />
+                <Mic v-else :size="15" />
+                {{ speaking ? 'Озвучиваем…' : 'Проверить озвучку' }}
+              </button>
+              <button
+                v-if="ai?.hasKey"
+                type="button"
+                class="btn btn--ghost btn--sm"
+                :disabled="aiSaving"
+                @click="clearAiKey"
+              >
+                Удалить ключ
+              </button>
+            </div>
+          </div>
+        </article>
+
+      </div>
+
+      <aside class="stack">
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <div class="card-title"><ArrowUpCircle :size="15" /> Обновления</div>
+              <div class="card-sub">Релизы GitHub проверяются по SHA-256</div>
+            </div>
+            <span
+              class="pill"
+              :class="
+                updateStore.info?.updateAvailable
+                  ? 'pill--primary'
+                  : updateStore.error || updateStore.info?.checkError
+                    ? 'pill--warn'
+                    : 'pill--ok'
+              "
+            >
+              {{
+                updateStore.restarting
+                  ? 'перезапуск'
+                  : updateStore.info?.updateAvailable
+                    ? 'есть новая'
+                    : updateStore.error || updateStore.info?.checkError
+                      ? 'нет связи'
+                      : 'актуально'
+              }}
+            </span>
+          </div>
+
+          <div class="kv mt-12">
+            <div class="kv-row">
+              <span class="kv-key">Установлено</span>
+              <span class="kv-value mono">{{ updateStore.info?.currentVersion ?? '—' }}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Последняя</span>
+              <span class="kv-value mono">
+                {{ updateStore.info?.latestVersion ?? '—' }}
+                <span v-if="updateStore.info?.publishedAt" class="muted">· {{ releaseDate }}</span>
+              </span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Размер архива</span>
+              <span class="kv-value mono">{{ formatBytes(updateStore.info?.assetSizeBytes) }}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Проверено</span>
+              <span class="kv-value">{{ updateCheckedLabel }}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Репозиторий</span>
+              <a
+                class="kv-value mono"
+                :href="`https://github.com/${updateStore.info?.repo ?? 'chrometechhype/alice-control-center'}`"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {{ updateStore.info?.repo ?? 'chrometechhype/alice-control-center' }}
+              </a>
+            </div>
+          </div>
+
+          <div v-if="updateStore.restarting" class="alert alert--info mt-12">
+            <LoaderCircle :size="15" class="spin" />
+            <div>{{ updateStore.progress }}</div>
+          </div>
+          <UpdateNotes v-else-if="updateStore.info?.updateAvailable" class="mt-12" />
+          <div v-else-if="updateStore.info?.checkError" class="alert alert--warn mt-12">
+            <AlertTriangle :size="15" />
+            <div>{{ updateStore.info.checkError }}</div>
+          </div>
+          <div v-else-if="updateStore.info?.reason" class="alert alert--warn mt-12">
+            <AlertTriangle :size="15" />
+            <div>{{ updateStore.info.reason }}</div>
+          </div>
+
+          <div class="toolbar mt-12">
+            <button class="btn btn--soft" :disabled="updateStore.loading || updateStore.restarting" @click="checkUpdates">
+              <LoaderCircle v-if="updateStore.loading" :size="15" class="spin" />
+              <RefreshCw v-else :size="15" />
+              Проверить обновления
+            </button>
+            <button
+              v-if="updateStore.info?.updateAvailable"
+              class="btn btn--primary"
+              :disabled="updateStore.installing || !updateStore.info.canInstall"
+              @click="updateConfirm = true"
+            >
+              <LoaderCircle v-if="updateStore.installing" :size="15" class="spin" />
+              <Download v-else :size="15" />
+              Установить {{ updateStore.info.latestVersion }}
+            </button>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <div>
               <div class="card-title"><Palette :size="15" /> Интерфейс</div>
               <div class="card-sub">Оформление и частота обновления метрик</div>
             </div>
@@ -905,262 +1162,6 @@ onMounted(() => {
         </article>
 
         <article class="card">
-          <div class="card-head">
-            <div>
-              <div class="card-title"><Wand2 :size="15" /> ИИ-генератор</div>
-              <div class="card-sub">Fun Lab и озвучка текста используют выбранный OpenAI-совместимый сервер</div>
-            </div>
-            <span class="pill" :class="ai?.configured ? 'pill--ok' : 'pill--muted'">
-              {{ ai?.configured ? 'готов' : 'не настроен' }}
-            </span>
-          </div>
-
-          <div v-if="aiLoading" class="muted mt-12" style="font-size: 12px">
-            <LoaderCircle :size="13" class="spin" /> Читаем настройки…
-          </div>
-
-          <div v-else class="form-grid mt-12">
-            <div class="row-wrap" style="gap: 12px">
-              <label class="field" style="flex: 1; min-width: 220px">
-                <span class="field-label">Провайдер</span>
-                <select class="select" :value="aiProvider" :disabled="aiSaving" @change="onAiProviderChange">
-                  <option v-for="preset in ai?.presets ?? []" :key="preset.id" :value="preset.id">
-                    {{ preset.label }}
-                  </option>
-                </select>
-              </label>
-              <label class="field" style="flex: 1.4; min-width: 240px">
-                <span class="field-label">Base URL</span>
-                <input
-                  v-model="aiBaseUrl"
-                  class="input"
-                  type="url"
-                  spellcheck="false"
-                  placeholder="https://api.example.com/v1"
-                  :disabled="aiSaving"
-                />
-              </label>
-            </div>
-
-            <label class="field">
-              <span class="field-label">Модель</span>
-              <input
-                v-model="aiModel"
-                class="input"
-                type="text"
-                spellcheck="false"
-                placeholder="gpt-4o-mini"
-                :disabled="aiSaving"
-              />
-            </label>
-
-            <div class="row-wrap" style="gap: 12px">
-              <label class="field" style="flex: 1; min-width: 180px">
-                <span class="field-label">Модель озвучки</span>
-                <input
-                  v-model="aiTtsModel"
-                  class="input"
-                  type="text"
-                  spellcheck="false"
-                  placeholder="tts-1"
-                  :disabled="aiSaving"
-                />
-              </label>
-              <label class="field" style="flex: 1; min-width: 180px">
-                <span class="field-label">Голос</span>
-                <input
-                  v-model="aiTtsVoice"
-                  class="input"
-                  type="text"
-                  spellcheck="false"
-                  placeholder="alloy"
-                  :disabled="aiSaving"
-                />
-              </label>
-            </div>
-
-            <label class="field">
-              <span class="field-label">API-ключ</span>
-              <input
-                v-model="aiApiKey"
-                class="input"
-                type="password"
-                autocomplete="off"
-                :placeholder="
-                  ai?.hasKey
-                    ? 'Ключ сохранён — оставьте поле пустым'
-                    : aiPreset?.requiresKey
-                      ? 'Обязателен для этого провайдера'
-                      : 'Необязательно'
-                "
-                :disabled="aiSaving"
-              />
-            </label>
-
-            <p v-if="aiPreset?.note" class="field-hint">{{ aiPreset.note }}</p>
-            <p class="field-hint">
-              Ключ хранится только в <span class="mono">data/config.json</span> на backend и никогда
-              не отдаётся во frontend. Подходит любой сервер с endpoint
-              <span class="mono">/chat/completions</span>. Озвучка использует
-              <span class="mono">/audio/speech</span>; если его нет, панель говорит голосом Windows —
-              чужой текст голосом Алисы произнести нельзя, он синтезируется в облаке Яндекса.
-            </p>
-
-            <div v-if="aiError" class="alert alert--error">
-              <AlertTriangle :size="15" />
-              <div>{{ aiError }}</div>
-            </div>
-            <div v-if="aiTestReply" class="alert alert--info">
-              <Check :size="15" />
-              <div>ИИ отвечает: {{ aiTestReply }}</div>
-            </div>
-            <div v-if="aiKeyRequired" class="alert alert--warn">
-              <AlertTriangle :size="15" />
-              <div>Для выбранного провайдера нужен API-ключ. Сохраните настройки вместе с ключом.</div>
-            </div>
-
-            <div class="row-wrap" style="gap: 10px">
-              <button
-                type="button"
-                class="btn btn--primary"
-                :disabled="aiSaving || !aiBaseUrl.trim() || !aiModel.trim()"
-                @click="saveAi"
-              >
-                <LoaderCircle v-if="aiSaving" :size="15" class="spin" />
-                <Check v-else :size="15" />
-                Сохранить
-              </button>
-              <button
-                type="button"
-                class="btn btn--soft"
-                :disabled="aiTesting || !ai?.configured"
-                @click="testAi"
-              >
-                <LoaderCircle v-if="aiTesting" :size="15" class="spin" />
-                <Wand2 v-else :size="15" />
-                {{ aiTesting ? 'Проверяем…' : 'Проверить' }}
-              </button>
-              <button
-                type="button"
-                class="btn btn--soft"
-                :disabled="speaking || !ai?.configured || !isConnected"
-                :title="isConnected ? 'Колонка произнесёт пробу и тут же удалит файл' : 'Нужно подключение к станции'"
-                @click="testSpeech"
-              >
-                <LoaderCircle v-if="speaking" :size="15" class="spin" />
-                <Mic v-else :size="15" />
-                {{ speaking ? 'Озвучиваем…' : 'Проверить озвучку' }}
-              </button>
-              <button
-                v-if="ai?.hasKey"
-                type="button"
-                class="btn btn--ghost btn--sm"
-                :disabled="aiSaving"
-                @click="clearAiKey"
-              >
-                Удалить ключ
-              </button>
-            </div>
-          </div>
-        </article>
-      </div>
-
-      <aside class="stack">
-        <article class="card">
-          <div class="card-head">
-            <div>
-              <div class="card-title"><ArrowUpCircle :size="15" /> Обновления</div>
-              <div class="card-sub">Релизы GitHub проверяются по SHA-256</div>
-            </div>
-            <span
-              class="pill"
-              :class="
-                updateStore.info?.updateAvailable
-                  ? 'pill--primary'
-                  : updateStore.error || updateStore.info?.checkError
-                    ? 'pill--warn'
-                    : 'pill--ok'
-              "
-            >
-              {{
-                updateStore.restarting
-                  ? 'перезапуск'
-                  : updateStore.info?.updateAvailable
-                    ? 'есть новая'
-                    : updateStore.error || updateStore.info?.checkError
-                      ? 'нет связи'
-                      : 'актуально'
-              }}
-            </span>
-          </div>
-
-          <div class="kv mt-12">
-            <div class="kv-row">
-              <span class="kv-key">Установлено</span>
-              <span class="kv-value mono">{{ updateStore.info?.currentVersion ?? '—' }}</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Последняя</span>
-              <span class="kv-value mono">
-                {{ updateStore.info?.latestVersion ?? '—' }}
-                <span v-if="updateStore.info?.publishedAt" class="muted">· {{ releaseDate }}</span>
-              </span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Размер архива</span>
-              <span class="kv-value mono">{{ formatBytes(updateStore.info?.assetSizeBytes) }}</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Проверено</span>
-              <span class="kv-value">{{ updateCheckedLabel }}</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Репозиторий</span>
-              <a
-                class="kv-value mono"
-                :href="`https://github.com/${updateStore.info?.repo ?? 'chrometechhype/alice-control-center'}`"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {{ updateStore.info?.repo ?? 'chrometechhype/alice-control-center' }}
-              </a>
-            </div>
-          </div>
-
-          <div v-if="updateStore.restarting" class="alert alert--info mt-12">
-            <LoaderCircle :size="15" class="spin" />
-            <div>{{ updateStore.progress }}</div>
-          </div>
-          <UpdateNotes v-else-if="updateStore.info?.updateAvailable" class="mt-12" />
-          <div v-else-if="updateStore.info?.checkError" class="alert alert--warn mt-12">
-            <AlertTriangle :size="15" />
-            <div>{{ updateStore.info.checkError }}</div>
-          </div>
-          <div v-else-if="updateStore.info?.reason" class="alert alert--warn mt-12">
-            <AlertTriangle :size="15" />
-            <div>{{ updateStore.info.reason }}</div>
-          </div>
-
-          <div class="toolbar mt-12">
-            <button class="btn btn--soft" :disabled="updateStore.loading || updateStore.restarting" @click="checkUpdates">
-              <LoaderCircle v-if="updateStore.loading" :size="15" class="spin" />
-              <RefreshCw v-else :size="15" />
-              Проверить обновления
-            </button>
-            <button
-              v-if="updateStore.info?.updateAvailable"
-              class="btn btn--primary"
-              :disabled="updateStore.installing || !updateStore.info.canInstall"
-              @click="updateConfirm = true"
-            >
-              <LoaderCircle v-if="updateStore.installing" :size="15" class="spin" />
-              <Download v-else :size="15" />
-              Установить {{ updateStore.info.latestVersion }}
-            </button>
-          </div>
-        </article>
-
-        <article class="card">
           <div class="card-title"><Settings :size="15" /> Сессия</div>
           <div class="kv mt-12">
             <div class="kv-row"><span class="kv-key">Режим</span><span class="kv-value">{{ store.auth.required ? 'LAN + токен' : 'локальный' }}</span></div>
@@ -1186,26 +1187,9 @@ onMounted(() => {
           </ul>
           <div class="alert alert--warn mt-12">
             <Info :size="15" />
-            <div>Не публикуйте root-доступ, SSH или ADB в открытый интернет.</div>
-          </div>
-        </article>
-
-        <article class="card">
-          <div class="card-title"><Info :size="15" /> О приложении</div>
-          <div class="kv mt-12">
-            <div class="kv-row">
-              <span class="kv-key">Версия</span>
-              <span class="kv-value mono">{{ updateStore.info?.currentVersion ?? '—' }}</span>
-            </div>
-            <div class="kv-row"><span class="kv-key">Frontend</span><span class="kv-value">Vue 3 + Vite</span></div>
-            <div class="kv-row"><span class="kv-key">Backend</span><span class="kv-value">Node.js + Express</span></div>
-            <div class="kv-row"><span class="kv-key">Хранилище</span><span class="kv-value mono">data/</span></div>
-          </div>
-          <div class="alert alert--info mt-12">
-            <Info :size="15" />
             <div>
-              Alice Control Center работает локально. Во внешнюю сеть уходят только запрос к
-              ИИ-серверу, выбранному вами, и проверка релизов на GitHub.
+              Не публикуйте root-доступ, SSH или ADB в открытый интернет. Во внешнюю сеть уходят
+              только запрос к вашему ИИ-серверу и проверка релизов на GitHub.
             </div>
           </div>
           <div class="settings-social">

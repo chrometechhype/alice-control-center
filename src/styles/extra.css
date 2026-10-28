@@ -644,3 +644,41 @@
 .kv-link:hover {
   text-decoration: underline;
 }
+
+/* ---------- Density ----------
+   List screens used to grow the whole page with the list: ninety sounds meant ninety rows and a
+   mile of scroll. A pane scrolls inside the card instead, and its height follows the window so the
+   page usually fits one screen. */
+.scroll-pane {
+  max-height: clamp(260px, calc(100vh - 380px), 720px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.scroll-pane--tight {
+  max-height: clamp(200px, calc(100vh - 520px), 420px);
+}
+
+/* An empty list must not reserve a screenful of nothing. */
+.empty--inline {
+  padding: 18px 16px;
+  gap: 6px;
+}
+
+.empty--inline p {
+  font-size: 12px;
+}
+
+/* The console grows with its content up to a point, then scrolls on its own. */
+.console--pane {
+  max-height: clamp(240px, calc(100vh - 470px), 560px);
+  overflow-y: auto;
+}
+
+/* A scrolled table keeps its header in view. */
+.table-wrap.scroll-pane thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+}

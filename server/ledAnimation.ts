@@ -1,7 +1,8 @@
 import { ACTION_READY_WAIT_MS, connectionManager } from './connection.ts';
 import { AccError } from './errors.ts';
 import { eventLog } from './events.ts';
-import { requireZones } from './ledControl.ts';
+import { requireZones, restoreLines, zonesFromCapabilities } from './ledControl.ts';
+import type { LedZone } from '../shared/types.ts';
 
 /**
  * Animations run on the station itself: the panel uploads a shell script that writes the LED
@@ -43,7 +44,7 @@ function clearAnimationTimer(): void {
   animationTimer = null;
 }
 
-export async function stopAnimation(): Promise<void> {
+export async function stopAnimation(options: { restore?: boolean } = {}): Promise<void> {
   animationToken += 1;
   clearAnimationTimer();
   animationState = { running: false };
@@ -55,10 +56,23 @@ export async function stopAnimation(): Promise<void> {
       { timeoutMs: 6000, maxBytes: 2000 },
     )
     .catch(() => undefined);
+  const zones = zonesFromCapabilities();
+  if (options.restore !== false && zones.length) {
+    // Killing the loop leaves the last frame lit. Put the ring back to the colour it had before the
+    // effect instead of freezing on a random frame.
+    await adapter
+      .exec(restoreLines(zones).join('\n'), { timeoutMs: 8000, maxBytes: 4000 })
+      .catch(() => undefined);
+  }
 }
 
-function buildAnimationScript(frames: number[][][], fps: number, repeat: number): string {
-  const zones = requireZones();
+export function buildAnimationScript(
+  frames: number[][][],
+  fps: number,
+  repeat: number,
+  restore: string[],
+  zones: LedZone[] = requireZones(),
+): string {
   const frameUs = Math.max(1000, Math.round(1_000_000 / fps));
   const lines: string[] = [
     '#!/bin/sh',
@@ -87,6 +101,8 @@ function buildAnimationScript(frames: number[][][], fps: number, repeat: number)
   lines.push('  return 0', '}');
   if (repeat > 0) {
     lines.push(`i=0`, `while [ "$i" -lt ${repeat} ]; do`, '  play || break', '  i=$((i+1))', 'done');
+    // A finished effect must not leave its last frame frozen on the ring.
+    lines.push(...restore);
   } else {
     lines.push('while :; do', '  play || break', 'done');
   }
@@ -105,9 +121,9 @@ export async function startAnimation(request: AnimationRequest): Promise<Animati
   requireZones();
   const durationMs = animationDurationMs(frames.length, fps, repeat || 1);
 
-  await stopAnimation();
+  await stopAnimation({ restore: false });
   const token = ++animationToken;
-  const script = buildAnimationScript(frames, fps, repeat);
+  const script = buildAnimationScript(frames, fps, repeat, loop ? [] : restoreLines(requireZones()));
   await adapter.writeFile(ANIMATION_SCRIPT, Buffer.from(script, 'utf8'), 0o755);
   const launch = await adapter.exec(
     `rm -f ${ANIMATION_STOP}; nohup sh ${ANIMATION_SCRIPT} </dev/null >/tmp/acc-led-anim.log 2>&1 &`,

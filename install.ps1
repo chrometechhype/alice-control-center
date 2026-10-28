@@ -5,7 +5,7 @@
 #
 # Installs into %LOCALAPPDATA%\AliceControlCenter (override with ACC_INSTALL_DIR),
 # keeps the existing data folder, verifies SHA-256 and creates a desktop shortcut.
-# Set ACC_VERSION to a tag (for example v1.0.0-alpha.1) to install that exact version.
+# Set ACC_VERSION to a tag (for example v1.0.0-alpha.2) to install that exact version.
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'

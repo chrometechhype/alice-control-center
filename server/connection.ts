@@ -7,6 +7,7 @@ import type {
   DeviceInfo,
   MetricsSample,
   PublicConnectionConfig,
+  StabilityMode,
 } from '../shared/types.ts';
 import { SshAdapter } from './adapters/SshAdapter.ts';
 import type { StationAdapter } from './adapters/StationAdapter.ts';
@@ -21,6 +22,7 @@ import { AccError, isTransportDeath } from './errors.ts';
 import { eventLog } from './events.ts';
 import { MetricsService } from './metrics.ts';
 import { runProbe, type ProbeResult } from './probe.ts';
+import { StabilityMonitor } from './stability.ts';
 import {
   discoverSshHosts,
   findIpByMac,
@@ -34,6 +36,11 @@ import { safeErrorMessage } from './util.ts';
 
 const MAX_FAST_ATTEMPTS = 4;
 const REVIVAL_INTERVAL_MS = 45_000;
+/** A station that has been gone for a while will not come back in 45 s — stop sweeping the /24 that often. */
+const LONG_REVIVAL_INTERVAL_MS = 120_000;
+const LONG_REVIVAL_AFTER_CYCLES = 2;
+/** Full /24 sweeps cost the laptop and the network; a moved station still needs one soon. */
+const SWEEP_THROTTLE_MS = 20_000;
 const METRICS_DEATH_STREAK = 3;
 /** A reboot is only declared when the wall clock and `/proc/uptime` disagree by this much… */
 const REBOOT_MIN_GAP_SEC = 300;
@@ -90,9 +97,13 @@ export class ConnectionManager extends EventEmitter {
   private revivalTimer: NodeJS.Timeout | null = null;
   private connectPromise: Promise<ConnectionSnapshot> | null = null;
   private attempts = 0;
+  private revivalCycles = 0;
+  private lastSweepAt = 0;
   private manualDisconnect = false;
   private metricsErrorStreak = 0;
   private lastUptime: { uptimeSec: number; at: number } | null = null;
+  private readonly stability = new StabilityMonitor(Math.max(2000, loadConfig().settings.pollIntervalMs));
+  private stabilityMode: StabilityMode | null = null;
 
   constructor() {
     super();
@@ -109,10 +120,16 @@ export class ConnectionManager extends EventEmitter {
     this.metrics = new MetricsService(() => this.adapter);
     this.metrics.on('sample', (sample: MetricsSample) => {
       this.metricsErrorStreak = 0;
+      const duration = this.metrics.getLastDurationMs();
+      if (duration != null) this.stability.recordRead(duration);
+      this.tunePolling();
       this.emit('metrics', sample);
     });
     this.metrics.on('error', (error: unknown) => {
       this.metricsErrorStreak += 1;
+      const duration = this.metrics.getLastDurationMs();
+      if (duration != null) this.stability.recordRead(duration);
+      this.tunePolling();
       if (this.metricsErrorStreak === 1) {
         eventLog.append({
           level: 'warn',
@@ -145,7 +162,40 @@ export class ConnectionManager extends EventEmitter {
   }
 
   getStatus(): ConnectionStatus {
-    return { ...this.status };
+    return { ...this.status, stability: this.stability.snapshot() };
+  }
+
+  /**
+   * Keeps the ambient polls in step with how the link behaves: a loaded station is asked less often,
+   * a recovered one gets its old cadence back. The verdict is also said out loud once per change,
+   * because «панель тормозит» and «колонка перегружена» look identical from the outside.
+   */
+  private tunePolling(): void {
+    const desired = this.stability.nextPollInterval();
+    const current = this.metrics.getIntervalMs();
+    if (current == null || Math.abs(desired - current) >= 1000) this.metrics.setIntervalMs(desired);
+
+    const snapshot = this.stability.snapshot();
+    if (snapshot.mode === this.stabilityMode) return;
+    const previous = this.stabilityMode;
+    this.stabilityMode = snapshot.mode;
+    if (!previous) return;
+    const every = Math.round(snapshot.pollIntervalMs / 1000);
+    const message =
+      snapshot.mode === 'unstable'
+        ? `Колонка перегружена: обрывов за 3 мин — ${snapshot.drops}. Панель опрашивает её раз в ${every} с и не торопит переподключение.`
+        : snapshot.mode === 'strained'
+          ? `Связь нестабильна: обрывов за 3 мин — ${snapshot.drops}. Панель замедлила опрос до ${every} с, чтобы не мешать колонке.`
+          : `Связь стабильна. Панель вернулась к обычному опросу — раз в ${every} с.`;
+    eventLog.append({
+      level: snapshot.mode === 'stable' ? 'success' : 'warn',
+      module: 'connection',
+      operation: 'stability',
+      result: snapshot.mode === 'stable' ? 'ok' : 'error',
+      message,
+      details: { ...snapshot },
+    });
+    this.emit('status', this.getStatus());
   }
 
   getPublicConfig(): PublicConnectionConfig | null {
@@ -407,7 +457,10 @@ export class ConnectionManager extends EventEmitter {
         connectedAt: Date.now(),
       };
       this.attempts = 0;
+      this.revivalCycles = 0;
       this.metricsErrorStreak = 0;
+      this.stability.recordConnected();
+      this.metrics.setIntervalMs(this.stability.nextPollInterval());
       if (persist) saveConnection(resolved);
       await this.learnIdentity(probe);
       this.metrics.start();
@@ -465,6 +518,9 @@ export class ConnectionManager extends EventEmitter {
     this.manualDisconnect = true;
     this.stopReconnect();
     this.metrics.stop();
+    // A deliberate disconnect is not instability: the next session starts with a clean slate.
+    this.stability.reset();
+    this.stabilityMode = null;
     await this.teardownAdapter();
     this.status = {
       state: 'disconnected',
@@ -477,6 +533,7 @@ export class ConnectionManager extends EventEmitter {
     this.capabilities = null;
     this.warnings = [];
     this.attempts = 0;
+    this.revivalCycles = 0;
     this.emit('status', this.getStatus());
     eventLog.append({
       level: 'info',
@@ -501,6 +558,7 @@ export class ConnectionManager extends EventEmitter {
     }
     this.stopReconnect();
     this.attempts = 0;
+    this.revivalCycles = 0;
     return this.connect(this.config, { persist: false, source: 'manual-retry' });
   }
 
@@ -569,6 +627,7 @@ export class ConnectionManager extends EventEmitter {
     };
     this.emit('status', this.getStatus());
     if (wasConnected) {
+      this.stability.recordDrop();
       eventLog.append({
         level: 'warn',
         module: 'connection',
@@ -590,12 +649,18 @@ export class ConnectionManager extends EventEmitter {
       // Giving up entirely was the worst part of the old behaviour: the station comes back
       // after a reboot or a new DHCP lease, and the panel stayed dead until a manual retry.
       this.attempts = 0;
+      // Each failed revival (a sweep that found nothing) stretches the next one. A station that is
+      // off or stuck in its own update loop for minutes does not need a /24 scan every 45 s — that
+      // costs the laptop and the network and never gets an answer any sooner.
+      const interval =
+        this.revivalCycles >= LONG_REVIVAL_AFTER_CYCLES ? LONG_REVIVAL_INTERVAL_MS : REVIVAL_INTERVAL_MS;
+      const every = Math.round(interval / 1000);
       this.status = {
         ...this.status,
         state: 'reconnecting',
         lastError: undefined,
         reconnectAttempt: undefined,
-        nextRetryAt: Date.now() + REVIVAL_INTERVAL_MS,
+        nextRetryAt: Date.now() + interval,
       };
       this.emit('status', this.getStatus());
       eventLog.append({
@@ -606,19 +671,21 @@ export class ConnectionManager extends EventEmitter {
         // Worth saying out loud: no amount of retrying reaches a station on another subnet, and
         // «вечно переподключается» is usually exactly that — the hotspot changed its range.
         message: interfaceForHost(this.config.host)
-          ? 'Колонка не отвечает. Ищем её в сети каждые 45 секунд.'
-          : `${this.config.host} не в вашей подсети: компьютер и колонка в разных сетях. Ищем каждые 45 секунд.`,
+          ? `Колонка не отвечает. Ищем её в сети каждые ${every} секунд.`
+          : `${this.config.host} не в вашей подсети: компьютер и колонка в разных сетях. Ищем каждые ${every} секунд.`,
       });
       this.revivalTimer = setTimeout(() => {
         this.revivalTimer = null;
         this.reconnectTimer = null;
+        this.revivalCycles += 1;
         void this.connect(undefined, { persist: false, source: 'auto-reconnect' }).catch(() => {
           if (!this.manualDisconnect) this.scheduleReconnect();
         });
-      }, REVIVAL_INTERVAL_MS);
+      }, interval);
       return;
     }
-    const delay = this.attempts === 0 ? 800 : Math.min(20_000, 1500 * 2 ** (this.attempts - 1));
+    const base = this.attempts === 0 ? 800 : Math.min(20_000, 1500 * 2 ** (this.attempts - 1));
+    const delay = this.stability.reconnectDelay(base);
     this.attempts += 1;
     this.status = {
       ...this.status,
@@ -673,6 +740,10 @@ export class ConnectionManager extends EventEmitter {
         return;
       }
     }
+    // The fast ladder can call this three times inside 20 s, and every call is a full /24 scan.
+    // Between sweeps the MAC answer above is the only cheap truth there is.
+    if (Date.now() - this.lastSweepAt < SWEEP_THROTTLE_MS) return;
+    this.lastSweepAt = Date.now();
     const hosts = await discoverSshHosts({ timeoutMs: 6_000 }).catch(() => [] as DiscoveredHost[]);
     const adopted = pickStation(hosts, config);
     if (adopted) {

@@ -130,17 +130,6 @@ onMounted(() => {
           перенаправления не передаются на устройство.
         </p>
       </div>
-      <div class="page-head__actions">
-        <button class="btn" :disabled="running || !command.trim()" @click="run()">
-          <LoaderCircle v-if="running" :size="15" class="spin" />
-          <Play v-else :size="15" />
-          {{ running ? 'Выполняем…' : 'Выполнить' }}
-        </button>
-        <button class="btn btn--soft" :disabled="!history.length" @click="history = []">
-          <Trash2 :size="15" />
-          Очистить вывод
-        </button>
-      </div>
     </div>
 
     <div v-if="!everConnected" class="card">
@@ -206,13 +195,19 @@ onMounted(() => {
 
           <article v-else class="card card--flush">
             <div class="file-toolbar">
-              <div class="search" style="flex: 1; min-width: 180px">
+              <div class="search" style="flex: 1; min-width: 140px">
                 <Search :size="14" />
                 <input v-model="query" class="input" placeholder="Поиск по командам…" />
               </div>
+              <select v-model="group" class="select" style="width: 158px">
+                <option value="all">Все группы · {{ allCommands.length }}</option>
+                <option v-for="name in groups" :key="name" :value="name">
+                  {{ name }} · {{ presets.find((item) => item.group === name)?.items.length ?? 0 }}
+                </option>
+              </select>
               <span class="pill pill--muted">{{ visibleGroups.reduce((sum, item) => sum + item.items.length, 0) }}</span>
             </div>
-            <div class="list">
+            <div class="list scroll-pane">
               <div v-for="preset in visibleGroups" :key="preset.group">
                 <div class="section-title" style="padding: 12px 16px 6px">{{ preset.group }}</div>
                 <button
@@ -235,6 +230,7 @@ onMounted(() => {
             </div>
             <EmptyState
               v-if="!visibleGroups.length"
+              compact
               title="Команды не найдены"
               text="Измените поисковый запрос или выберите другую группу."
             >
@@ -244,29 +240,42 @@ onMounted(() => {
         </div>
 
         <aside class="stack">
-          <article class="card">
-            <div class="card-title"><SquareTerminal :size="15" /> Группы</div>
-            <div class="category-list mt-12">
-              <button
-                type="button"
-                class="category-item"
-                :class="{ active: group === 'all' }"
-                @click="group = 'all'"
-              >
-                <span>Все группы</span>
-                <span class="mono">{{ allCommands.length }}</span>
+          <article class="card card--flush">
+            <div class="file-toolbar">
+              <div class="card-title" style="flex: 1"><SquareTerminal :size="15" /> Вывод</div>
+              <button class="btn btn--ghost btn--icon btn--sm" title="Очистить вывод" :disabled="!history.length" @click="history = []">
+                <Trash2 :size="14" />
               </button>
-              <button
-                v-for="name in groups"
-                :key="name"
-                type="button"
-                class="category-item"
-                :class="{ active: group === name }"
-                @click="group = name"
-              >
-                <span class="truncate">{{ name }}</span>
-                <span class="mono">{{ presets.find((item) => item.group === name)?.items.length ?? 0 }}</span>
-              </button>
+            </div>
+            <div style="padding: 12px 14px">
+              <div class="console console--pane">
+                <div v-if="!history.length" style="color: #8b98aa">
+                  Вывод появится здесь. Выберите команду слева или нажмите «Запуск».
+                </div>
+                <div v-for="item in history" :key="`${item.ts}-${item.command}`" class="console-block">
+                  <div class="console-head">
+                    <span>$ {{ item.command }}</span>
+                    <span class="spacer" />
+                    <span :class="item.code === 0 ? 'ok' : 'err'">exit {{ item.code }}</span>
+                    <span>{{ formatDuration(item.durationMs) }}</span>
+                    <span>{{ formatTime(item.ts) }}</span>
+                    <button
+                      type="button"
+                      class="btn btn--ghost btn--icon btn--sm"
+                      style="color: #9aa7b8"
+                      title="Скопировать вывод"
+                      @click="copyResult(item)"
+                    >
+                      <Copy :size="13" />
+                    </button>
+                  </div>
+                  <pre v-if="item.stdout" class="script-block">{{ item.stdout }}</pre>
+                  <pre v-if="item.stderr" class="script-block err">{{ item.stderr }}</pre>
+                  <div v-if="item.timedOut" class="err">Команда прервана по таймауту.</div>
+                  <div v-if="item.truncated" class="err">Вывод обрезан из-за ограничения размера.</div>
+                  <div v-if="!item.stdout && !item.stderr" style="color: #8b98aa">(пустой вывод)</div>
+                </div>
+              </div>
             </div>
           </article>
 
@@ -281,43 +290,6 @@ onMounted(() => {
           </article>
         </aside>
       </div>
-
-      <article class="card card--flush">
-        <div class="file-toolbar">
-          <div class="card-title" style="flex: 1"><SquareTerminal :size="15" /> Вывод</div>
-          <span class="muted" style="font-size: 11px">Последние {{ history.length }} из 12</span>
-        </div>
-        <div style="padding: 14px 16px">
-          <div class="console">
-            <div v-if="!history.length" style="color: #8b98aa">
-              Вывод появится здесь. Выберите команду слева или нажмите «Запуск».
-            </div>
-            <div v-for="item in history" :key="`${item.ts}-${item.command}`" class="console-block">
-              <div class="console-head">
-                <span>$ {{ item.command }}</span>
-                <span class="spacer" />
-                <span :class="item.code === 0 ? 'ok' : 'err'">exit {{ item.code }}</span>
-                <span>{{ formatDuration(item.durationMs) }}</span>
-                <span>{{ formatTime(item.ts) }}</span>
-                <button
-                  type="button"
-                  class="btn btn--ghost btn--icon btn--sm"
-                  style="color: #9aa7b8"
-                  title="Скопировать вывод"
-                  @click="copyResult(item)"
-                >
-                  <Copy :size="13" />
-                </button>
-              </div>
-              <pre v-if="item.stdout" class="script-block">{{ item.stdout }}</pre>
-              <pre v-if="item.stderr" class="script-block err">{{ item.stderr }}</pre>
-              <div v-if="item.timedOut" class="err">Команда прервана по таймауту.</div>
-              <div v-if="item.truncated" class="err">Вывод обрезан из-за ограничения размера.</div>
-              <div v-if="!item.stdout && !item.stderr" style="color: #8b98aa">(пустой вывод)</div>
-            </div>
-          </div>
-        </div>
-      </article>
     </template>
   </div>
 </template>

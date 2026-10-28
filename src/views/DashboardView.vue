@@ -48,7 +48,30 @@ import {
 const sample = computed(() => store.lastSample);
 const info = computed(() => store.info);
 const visual = computed(() => detectDeviceVisual(store.info));
-const heroTitle = computed(() => (isConnected.value ? visual.value.label : 'Колонка не подключена'));
+const heroTitle = computed(() => {
+  if (isConnected.value) return visual.value.label;
+  if (store.status.state === 'reconnecting') return 'Колонка не отвечает';
+  if (store.status.state === 'connecting') return 'Подключаемся к колонке';
+  return 'Колонка не подключена';
+});
+/** «Не подключена» is wrong while the panel is already retrying a known address — say what is happening. */
+const heroDesc = computed(() => {
+  if (isConnected.value) return null;
+  const status = store.status;
+  if (status.state === 'reconnecting' || status.state === 'connecting') {
+    const stability = status.stability;
+    if (stability && stability.mode !== 'stable') {
+      const every = Math.round(stability.pollIntervalMs / 1000);
+      return `Панель ищет колонку в сети и не мешает ей: обрывов за 3 мин — ${stability.drops}, опрос раз в ${every} с.`;
+    }
+    return 'Панель ищет колонку в сети и подключится сама, как только та ответит. Обычно это её перезагрузка или новый адрес по DHCP.';
+  }
+  if (status.lastError) return status.lastError;
+  if (!everConnected.value) {
+    return 'Укажите адрес SSH и пароль в мастере подключения. Backend по умолчанию слушает только 127.0.0.1.';
+  }
+  return 'Колонка не отвечает. Проверьте, что она включена и доступна по локальной сети.';
+});
 const history = computed(() => store.metrics);
 const ledAvailable = computed(() => Boolean(store.capabilities?.led.available));
 const recentEvents = computed(() => store.events.slice(0, 6));
@@ -185,9 +208,7 @@ onMounted(() => {
         <div v-if="isConnected && info?.modelRaw" class="hero-model">
           <span class="hero-model__raw">{{ info.modelRaw.replace(/\0/g, '').trim() }}</span>
         </div>
-        <p v-if="!everConnected" class="hero-desc">
-          {{ store.status.lastError || 'Укажите адрес SSH и пароль в мастере подключения. Backend по умолчанию слушает только 127.0.0.1.' }}
-        </p>
+        <p v-if="heroDesc" class="hero-desc">{{ heroDesc }}</p>
         <div class="hero-actions">
           <button v-if="isConnected" class="btn btn--soft" :disabled="probeBusy" @click="refresh">
             <RefreshCw :size="15" :class="{ spin: probeBusy }" />

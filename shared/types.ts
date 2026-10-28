@@ -25,6 +25,25 @@ export interface ConnectionStatus {
   lastError?: string;
   reconnectAttempt?: number;
   nextRetryAt?: number;
+  stability?: StabilitySnapshot;
+}
+
+/** How the link behaves right now — the panel's own verdict on its SSH session. */
+export type StabilityMode = 'stable' | 'strained' | 'unstable';
+
+export interface StabilitySnapshot {
+  mode: StabilityMode;
+  /** Uplinks lost inside the observation window. */
+  drops: number;
+  windowMs: number;
+  /** Share of the window the station actually answered, 0…1. */
+  uptimeRatio: number;
+  lastDropAgoMs: number | null;
+  meanRecoveryMs: number | null;
+  /** Reads that took long enough to be a symptom of a loaded station. */
+  slowReads: number;
+  /** Milliseconds between ambient polls the panel currently keeps to. */
+  pollIntervalMs: number;
 }
 
 export interface DeviceInfo {

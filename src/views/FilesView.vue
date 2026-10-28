@@ -343,7 +343,10 @@ onMounted(() => {
           </div>
           <div class="alert alert--info mt-12" style="font-size: 11px">
             <Info :size="14" />
-            <div>Список каталогов задан в backend. Добавить произвольный путь нельзя.</div>
+            <div>
+              Список каталогов задан в backend — произвольный путь не добавить. Предпросмотр читает
+              текстовые файлы до 512 КБ; двоичные файлы и архивы можно только скачать.
+            </div>
           </div>
           <div v-if="absentRoots.length" class="field-hint mt-8">
             На этой колонке нет: {{ absentRoots.map((root) => root.label.toLowerCase()).join(', ') }}.
@@ -380,13 +383,14 @@ onMounted(() => {
 
             <EmptyState
               v-else-if="!filtered.length"
+              compact
               :title="query ? 'Ничего не найдено' : 'Каталог пуст'"
               :text="query ? 'Измените фильтр по имени файла.' : 'В этом каталоге нет файлов или подкаталогов.'"
             >
               <template #icon><FolderOpen :size="20" /></template>
             </EmptyState>
 
-            <div v-else class="table-wrap">
+            <div v-else class="table-wrap scroll-pane">
               <table class="table table--files">
                 <colgroup>
                   <col />
@@ -459,14 +463,6 @@ onMounted(() => {
               </table>
             </div>
           </article>
-
-          <div class="alert alert--info">
-            <Info :size="15" />
-            <div>
-              Предпросмотр показывает текстовые файлы до 512 КБ. Двоичные файлы и архивы можно
-              только скачать. Удаление и переименование требуют прав записи в каталог.
-            </div>
-          </div>
         </div>
       </div>
     </template>

@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   Archive,
   AudioLines,
-  Check,
   Download,
   HardDrive,
   Info,
@@ -64,6 +63,7 @@ const packError = ref('');
 
 const publishFile = ref<File | null>(null);
 const publishName = ref('');
+const publishOpen = ref(false);
 const publishing = ref(false);
 const publishError = ref('');
 const publishConflict = ref(false);
@@ -207,6 +207,14 @@ async function playOnStation(file: SoundFile): Promise<void> {
   }
 }
 
+function openPublish(): void {
+  publishFile.value = null;
+  publishName.value = '';
+  publishError.value = '';
+  publishConflict.value = false;
+  publishOpen.value = true;
+}
+
 function onPublishPicked(event: Event): void {
   const input = event.target as HTMLInputElement;
   publishFile.value = input.files?.[0] ?? null;
@@ -232,6 +240,7 @@ async function publishSound(confirm = false): Promise<void> {
     publishFile.value = null;
     publishName.value = '';
     publishConflict.value = false;
+    publishOpen.value = false;
     pushToast('ok', `Опубликовано в библиотеке: ${saved.name}`);
     await load();
   } catch (caught) {
@@ -467,13 +476,17 @@ onMounted(() => {
               </button>
             </div>
             <span class="pill pill--muted">{{ filtered.length }} из {{ listing?.files.length ?? 0 }}</span>
+            <button class="btn btn--primary btn--sm" :disabled="!listing" @click="openPublish">
+              <Plus :size="14" />
+              Опубликовать
+            </button>
           </div>
 
           <div v-if="loading && !listing" class="empty" style="padding: 34px">
             <LoaderCircle :size="20" class="spin" />
             <p>Сканируем каталоги звуков…</p>
           </div>
-          <div v-else-if="filtered.length" class="list">
+          <div v-else-if="filtered.length" class="list scroll-pane">
             <div
               v-for="file in filtered"
               :key="file.path"
@@ -552,7 +565,7 @@ onMounted(() => {
               </div>
             </div>
           </div>
-          <EmptyState v-else title="Звуки не найдены" text="Измените фильтр или пересканируйте каталог.">
+          <EmptyState v-else compact title="Звуки не найдены" text="Измените фильтр или пересканируйте каталог.">
             <template #icon><AudioLines :size="22" /></template>
           </EmptyState>
         </article>
@@ -565,77 +578,12 @@ onMounted(() => {
             <VolumeControl />
           </article>
 
-          <article class="card card--soft">
-            <div class="card-head">
-              <div class="card-title"><Upload :size="15" /> Опубликовать звук</div>
-              <span class="pill pill--muted">{{ libraryFiles.length }} в библиотеке</span>
-            </div>
-            <p class="field-hint mt-8">
-              Файл ложится в <span class="code-inline">/data/sounds</span> и остаётся там, пока вы его не
-              удалите. Системные звуки станции удалить нельзя — их можно только заменить.
-            </p>
-            <div class="field mt-12">
-              <label for="publish-file">Аудиофайл</label>
-              <input
-                id="publish-file"
-                type="file"
-                class="input"
-                accept="audio/*,.mp3,.wav,.ogg,.opus,.flac,.m4a,.aac"
-                @change="onPublishPicked"
-              />
-              <span v-if="publishFile" class="field-hint">
-                {{ publishFile.name }} · {{ formatBytes(publishFile.size) }}
-              </span>
-            </div>
-            <div class="field mt-12">
-              <label for="publish-name">Имя на станции (необязательно)</label>
-              <input
-                id="publish-name"
-                v-model="publishName"
-                class="input"
-                maxlength="90"
-                :placeholder="publishFile ? publishFile.name : 'Как в файле'"
-                :disabled="publishing"
-              />
-              <span class="field-hint">
-                Свободно на /data: {{ formatBytes(userFreeBytes) }}
-                <template v-if="publishFile && !publishFits">
-                  · файл не поместится, освободите место
-                </template>
-              </span>
-            </div>
-            <div v-if="publishError" class="alert" :class="publishConflict ? 'alert--warn' : 'alert--error'">
-              <AlertTriangle :size="15" />
-              <div>{{ publishError }}</div>
-            </div>
-            <button
-              type="button"
-              class="btn btn--primary mt-12 w-full"
-              :disabled="publishing || !publishFile || !publishFits"
-              @click="publishSound(false)"
-            >
-              <LoaderCircle v-if="publishing" :size="15" class="spin" />
-              <Plus v-else :size="15" />
-              {{ publishing ? 'Записываем на станцию…' : 'Загрузить на станцию' }}
-            </button>
-            <button
-              v-if="publishConflict"
-              type="button"
-              class="btn mt-8 w-full"
-              :disabled="publishing"
-              @click="publishSound(true)"
-            >
-              <Upload :size="15" />
-              Заменить существующий
-            </button>
-          </article>
-
           <article class="card">
             <div class="card-head">
               <div class="card-title"><Package :size="15" /> Категории</div>
               <span class="pill pill--muted">{{ categories.length }}</span>
             </div>
-            <div class="category-list">
+            <div class="category-list scroll-pane scroll-pane--tight">
               <button
                 type="button"
                 class="category-item"
@@ -680,8 +628,7 @@ onMounted(() => {
               <span class="field-hint">
                 {{ speechText.trim().length }}/{{ speechLimit }} · Голос Алисы недоступен — он синтезируется
                 на сервере Яндекса. Панель говорит через ИИ-провайдера, а если у него нет
-                <span class="mono">/audio/speech</span> — голосом Windows. Звук играется один раз и не
-                попадает в библиотеку станции.
+                <span class="mono">/audio/speech</span> — голосом Windows.
               </span>
             </div>
             <div v-if="speechError" class="alert alert--error">
@@ -704,30 +651,14 @@ onMounted(() => {
             </button>
           </article>
 
-          <article class="card card--soft">
-            <div class="card-title"><Info :size="15" /> Как работает замена</div>
-            <ul class="check-list mt-12">
-              <li><Check :size="14" /><span>Сначала создаётся бэкап исходника на этом компьютере</span></li>
-              <li><Check :size="14" /><span>Формат нового файла должен совпадать с целевым</span></li>
-              <li><Check :size="14" /><span>Проверяется сигнатура аудио и свободное место</span></li>
-              <li><Check :size="14" /><span>После записи сравнивается SHA-256 на устройстве</span></li>
-            </ul>
-            <div v-if="listing?.errors.length" class="stack mt-12" style="gap: 6px">
+          <article v-if="listing?.errors.length" class="card card--soft">
+            <div class="card-title"><Info :size="15" /> Замечания при сканировании</div>
+            <div class="stack mt-12" style="gap: 6px">
               <div v-for="item in listing.errors" :key="item" class="alert alert--warn" style="font-size: 11px">
                 <AlertTriangle :size="14" />
                 <div>{{ item }}</div>
               </div>
             </div>
-          </article>
-          <article class="card">
-            <div class="card-title"><Archive :size="15" /> Паки</div>
-            <p class="field-hint mt-8">
-              Пак — это резервная копия выбранных звуков на компьютере. Он не устанавливается на колонку автоматически.
-            </p>
-            <button class="btn btn--soft mt-12 w-full" :disabled="!listing" @click="openPack">
-              <Package :size="15" />
-              Собрать пак
-            </button>
           </article>
         </aside>
       </div>
@@ -787,6 +718,78 @@ onMounted(() => {
           <LoaderCircle v-if="replacing" :size="15" class="spin" />
           <Upload v-else :size="15" />
           {{ replacing ? 'Записываем…' : 'Заменить с бэкапом' }}
+        </button>
+      </template>
+    </Modal>
+
+    <Modal
+      :open="publishOpen"
+      title="Опубликовать звук"
+      subtitle="Своя библиотека в /data/sounds"
+      @close="publishOpen = false"
+    >
+      <div class="stack" style="gap: 14px">
+        <p class="field-hint">
+          Файл ложится в <span class="code-inline">/data/sounds</span> и остаётся там, пока вы его не
+          удалите. Системные звуки станции удалить нельзя — их можно только заменить.
+        </p>
+        <div class="field">
+          <label for="publish-file">Аудиофайл</label>
+          <input
+            id="publish-file"
+            type="file"
+            class="input"
+            accept="audio/*,.mp3,.wav,.ogg,.opus,.flac,.m4a,.aac"
+            @change="onPublishPicked"
+          />
+          <span v-if="publishFile" class="field-hint">
+            {{ publishFile.name }} · {{ formatBytes(publishFile.size) }}
+          </span>
+        </div>
+        <div class="field">
+          <label for="publish-name">Имя на станции (необязательно)</label>
+          <input
+            id="publish-name"
+            v-model="publishName"
+            class="input"
+            maxlength="90"
+            :placeholder="publishFile ? publishFile.name : 'Как в файле'"
+            :disabled="publishing"
+          />
+          <span class="field-hint">
+            Свободно на /data: {{ formatBytes(userFreeBytes) }}
+            <template v-if="publishFile && !publishFits">· файл не поместится, освободите место</template>
+          </span>
+        </div>
+        <div v-if="publishError" class="alert" :class="publishConflict ? 'alert--warn' : 'alert--error'">
+          <AlertTriangle :size="15" />
+          <div>{{ publishError }}</div>
+        </div>
+        <div v-if="publishConflict" class="alert alert--info">
+          <Info :size="15" />
+          <div>Файл с таким именем уже есть на станции. Подтвердите замену отдельной кнопкой.</div>
+        </div>
+      </div>
+      <template #footer>
+        <button class="btn" :disabled="publishing" @click="publishOpen = false">Отмена</button>
+        <button
+          v-if="publishConflict"
+          class="btn"
+          :disabled="publishing"
+          @click="publishSound(true)"
+        >
+          <Upload :size="15" />
+          Заменить существующий
+        </button>
+        <button
+          v-else
+          class="btn btn--primary"
+          :disabled="publishing || !publishFile || !publishFits"
+          @click="publishSound(false)"
+        >
+          <LoaderCircle v-if="publishing" :size="15" class="spin" />
+          <Plus v-else :size="15" />
+          {{ publishing ? 'Записываем на станцию…' : 'Загрузить на станцию' }}
         </button>
       </template>
     </Modal>

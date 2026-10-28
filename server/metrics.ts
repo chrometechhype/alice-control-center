@@ -40,6 +40,8 @@ export class MetricsService extends EventEmitter {
   private previousCpu: CpuTimes | null = null;
   private history: MetricsSample[] = [];
   private lastError: string | null = null;
+  private intervalMs: number | null = null;
+  private lastDurationMs: number | null = null;
 
   constructor(private readonly getAdapter: () => StationAdapter | null) {
     super();
@@ -49,9 +51,11 @@ export class MetricsService extends EventEmitter {
     this.stop();
     this.previousCpu = null;
     this.sampleInFlight = false;
-    const interval = Math.max(2000, loadConfig().settings.pollIntervalMs);
+    if (this.intervalMs == null) {
+      this.intervalMs = Math.max(2000, loadConfig().settings.pollIntervalMs);
+    }
     void this.tick();
-    this.timer = setInterval(() => void this.tick(), interval);
+    this.timer = setInterval(() => void this.tick(), this.intervalMs);
   }
 
   stop(): void {
@@ -59,8 +63,24 @@ export class MetricsService extends EventEmitter {
     this.timer = null;
   }
 
+  getIntervalMs(): number | null {
+    return this.intervalMs;
+  }
+
+  /** How long the last full sample took — the panel's cheapest signal that the station is busy. */
+  getLastDurationMs(): number | null {
+    return this.lastDurationMs;
+  }
+
+  /**
+   * Reschedules only: `start()` fires an immediate sample and forgets the previous CPU reading, and
+   * calling it from a sample handler would double-poll and lose the delta.
+   */
   setIntervalMs(ms: number): void {
-    if (this.timer) this.start();
+    this.intervalMs = Math.max(1000, Math.round(ms));
+    if (!this.timer) return;
+    clearInterval(this.timer);
+    this.timer = setInterval(() => void this.tick(), this.intervalMs);
   }
 
   getHistory(): MetricsSample[] {
@@ -80,6 +100,7 @@ export class MetricsService extends EventEmitter {
     const adapter = this.getAdapter();
     if (!adapter?.isConnected()) return;
     this.sampleInFlight = true;
+    const startedAt = Date.now();
     try {
       const { stdout } = await adapter.exec(METRICS_SCRIPT, {
         timeoutMs: 12_000,
@@ -132,6 +153,7 @@ export class MetricsService extends EventEmitter {
       this.lastError = error instanceof Error ? error.message : 'Ошибка опроса метрик';
       this.emit('error', error);
     } finally {
+      this.lastDurationMs = Date.now() - startedAt;
       this.sampleInFlight = false;
     }
   }
