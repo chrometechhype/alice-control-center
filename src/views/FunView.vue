@@ -270,6 +270,7 @@ async function runScene(scene: Scene): Promise<void> {
       const color = hslToRgb(Math.floor(Math.random() * 360), 0.9, 0.55);
       await api.post('/led/apply', {
         zones: Array.from({ length: zoneCount.value }, () => [...color]),
+        effect: true,
       });
       pushToast('ok', `Случайный цвет: ${rgbCss(color)}`);
     } else {
@@ -326,7 +327,7 @@ async function resetEffect(): Promise<void> {
   busy.value = true;
   try {
     await api.post('/led/reset');
-    pushToast('ok', 'Эффект сброшен: кольцо вернулось к цвету до анимации');
+    pushToast('ok', 'Эффект сброшен: кольцо вернулось к цвету до эффекта');
   } catch (caught) {
     pushToast('error', errorMessage(caught));
   } finally {

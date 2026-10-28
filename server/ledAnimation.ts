@@ -1,7 +1,7 @@
 import { ACTION_READY_WAIT_MS, connectionManager } from './connection.ts';
 import { AccError } from './errors.ts';
 import { eventLog } from './events.ts';
-import { requireZones, restoreLines, zonesFromCapabilities } from './ledControl.ts';
+import { requireZones, commitRestorePoint, restoreLines, restorePointLines, zonesFromCapabilities } from './ledControl.ts';
 import type { LedZone } from '../shared/types.ts';
 
 /**
@@ -49,7 +49,18 @@ export async function stopAnimation(options: { restore?: boolean } = {}): Promis
   clearAnimationTimer();
   animationState = { running: false };
   const adapter = connectionManager.getAdapter();
-  if (!adapter?.isConnected()) return;
+  if (!adapter?.isConnected()) {
+    // With no channel there is nothing to stop and nothing to repaint; saying "сброшено" here is
+    // exactly how the ring stayed lit while the panel reported success.
+    if (options.restore !== false) {
+      throw new AccError(
+        'LED_UNAVAILABLE',
+        'Колонка недоступна: кольцо не удалось вернуть к прежнему цвету. Проверьте связь и повторите.',
+        409,
+      );
+    }
+    return;
+  }
   await adapter
     .exec(
       `touch ${ANIMATION_STOP}; if [ -f ${ANIMATION_PID} ]; then kill "$(cat ${ANIMATION_PID})" 2>/dev/null; fi; rm -f ${ANIMATION_PID}`,
@@ -59,10 +70,13 @@ export async function stopAnimation(options: { restore?: boolean } = {}): Promis
   const zones = zonesFromCapabilities();
   if (options.restore !== false && zones.length) {
     // Killing the loop leaves the last frame lit. Put the ring back to the colour it had before the
-    // effect instead of freezing on a random frame.
-    await adapter
-      .exec(restoreLines(zones).join('\n'), { timeoutMs: 8000, maxBytes: 4000 })
-      .catch(() => undefined);
+    // effect — the state saved before the show, not the colour the effect itself wrote.
+    try {
+      await adapter.exec(restorePointLines(zones).join('\n'), { timeoutMs: 8000, maxBytes: 4000 });
+      commitRestorePoint();
+    } catch {
+      // The restore point stays for the next attempt; the ring is still lit by the effect.
+    }
   }
 }
 

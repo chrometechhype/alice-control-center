@@ -10,8 +10,10 @@ import { asyncRoute, sendOk } from '../http.ts';
 import {
   allLedsOff,
   applyColors,
+  clearRestorePoint,
   describeMismatches,
   ledPowerOn,
+  markRestorePoint,
   restoreNative,
   zonesFromCapabilities,
 } from '../ledControl.ts';
@@ -21,18 +23,23 @@ import { newId } from '../util.ts';
 
 export const ledRouter = Router();
 
-function parseApplyBody(body: unknown): number[][] {
+function parseApplyBody(body: unknown): { colors: number[][]; effect: boolean } {
   const schema = z.object({
     zones: z
       .array(z.tuple([z.number().int().min(0).max(255), z.number().int().min(0).max(255), z.number().int().min(0).max(255)]))
       .min(1)
       .max(32),
+    /** A Fun Lab effect is undoable by «Сброс»; a chosen colour in LED Studio is a lasting state. */
+    effect: z.boolean().optional(),
   });
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
     throw new AccError('BAD_COLORS', 'Цвета должны быть массивами [R, G, B] от 0 до 255', 400);
   }
-  return parsed.data.zones.map((zone) => [...zone]);
+  return {
+    colors: parsed.data.zones.map((zone) => [...zone]),
+    effect: parsed.data.effect === true,
+  };
 }
 
 function loadPresets(): LedPreset[] {
@@ -90,8 +97,10 @@ ledRouter.get(
 ledRouter.post(
   '/apply',
   asyncRoute(async (req, res) => {
-    const colors = parseApplyBody(req.body);
+    const { colors, effect } = parseApplyBody(req.body);
     await stopAnimation({ restore: false });
+    if (effect) markRestorePoint();
+    else clearRestorePoint();
     const result = await applyColors(colors);
     sendOk(res, {
       zones: result.colors,
@@ -106,6 +115,7 @@ ledRouter.post(
   '/off',
   asyncRoute(async (_req, res) => {
     await stopAnimation({ restore: false });
+    clearRestorePoint();
     await allLedsOff();
     sendOk(res, { off: true });
   }),
@@ -119,6 +129,7 @@ ledRouter.post(
   '/on',
   asyncRoute(async (_req, res) => {
     await stopAnimation({ restore: false });
+    clearRestorePoint();
     const outcome = await ledPowerOn();
     sendOk(res, {
       on: true,
@@ -144,8 +155,8 @@ ledRouter.post(
       operation: 'reset',
       result: 'ok',
       message: wasRunning
-        ? 'LED-эффект остановлен, кольцо возвращено к цвету до анимации'
-        : 'LED-кольцо сброшено к сохранённому состоянию',
+        ? 'LED-эффект остановлен, кольцо возвращено к цвету до эффекта'
+        : 'LED-кольцо сброшено к цвету до эффекта',
     });
     sendOk(res, { reset: true, stopped: wasRunning, power: ledState() });
   }),
@@ -155,6 +166,7 @@ ledRouter.post(
   '/restore',
   asyncRoute(async (_req, res) => {
     await stopAnimation({ restore: false });
+    clearRestorePoint();
     await restoreNative();
     sendOk(res, { restored: true });
   }),
@@ -187,6 +199,7 @@ ledRouter.post(
     }
     const { frames, fps, loop } = parsed.data;
     const repeat = loop ? 0 : parsed.data.repeat;
+    markRestorePoint();
     const state = await startAnimation({ frames, fps, repeat, loop });
     const seconds = state.durationMs ? state.durationMs / 1000 : 0;
     sendOk(res, {

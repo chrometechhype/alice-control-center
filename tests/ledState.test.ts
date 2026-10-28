@@ -21,13 +21,15 @@ const zones: LedZone[] = [1, 2, 3].map((ring) => ({
 
 let buildAnimationScript: typeof import('../server/ledAnimation.ts')['buildAnimationScript'];
 let restoreLines: typeof import('../server/ledControl.ts')['restoreLines'];
+let ledControl: typeof import('../server/ledControl.ts');
 let ledState: typeof import('../server/ledState.ts');
 
 beforeAll(async () => {
   // The LED state lives on disk; point it at a scratch directory so a test never rewrites real data.
   process.env.ACC_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'acc-led-test-'));
   ledState = await import('../server/ledState.ts');
-  restoreLines = (await import('../server/ledControl.ts')).restoreLines;
+  ledControl = await import('../server/ledControl.ts');
+  restoreLines = ledControl.restoreLines;
   buildAnimationScript = (await import('../server/ledAnimation.ts')).buildAnimationScript;
 });
 
@@ -106,5 +108,51 @@ describe('restore after an effect', () => {
     ledState.rememberOff();
     expect(ledState.ledState().on).toBe(false);
     expect(ledState.ledState().colors).toEqual([[9, 8, 7]]);
+  });
+});
+
+describe('restore point for «Сброс»', () => {
+  it('undoes a Fun Lab effect instead of writing its colour back', () => {
+    ledControl.clearRestorePoint();
+    ledState.rememberNative();
+    const before = ledState.ledState();
+    ledControl.markRestorePoint();
+    // A random colour is saved as "last colours", which is why reset used to restore it.
+    ledState.rememberColors([[255, 0, 0], [255, 0, 0], [255, 0, 0]]);
+
+    expect(ledControl.restorePointLines(zones).join('\n')).toContain('led_ring_fb');
+
+    ledControl.commitRestorePoint();
+    expect(ledState.ledState()).toEqual(before);
+  });
+
+  it('keeps the first point while the show goes on', () => {
+    ledControl.clearRestorePoint();
+    ledState.rememberColors([[1, 2, 3]]);
+    ledControl.markRestorePoint();
+    ledState.rememberColors([[9, 9, 9]]);
+    ledControl.markRestorePoint();
+    ledState.rememberColors([[8, 8, 8]]);
+
+    ledControl.commitRestorePoint();
+    expect(ledState.ledState().colors).toEqual([[1, 2, 3]]);
+  });
+
+  it('forgets the point after a deliberate apply, power change or hand-over', () => {
+    ledState.rememberColors([[4, 5, 6]]);
+    ledControl.markRestorePoint();
+    ledControl.clearRestorePoint();
+    ledState.rememberColors([[7, 8, 9]]);
+
+    const lines = ledControl.restorePointLines(zones).join('\n');
+    expect(lines).toContain("echo 7 > '/sys/class/leds/plum:red:ring1/brightness'");
+  });
+
+  it('falls back to the saved state when no effect was played', () => {
+    ledControl.clearRestorePoint();
+    ledState.rememberColors([[3, 3, 3]]);
+
+    const lines = ledControl.restorePointLines(zones).join('\n');
+    expect(lines).toContain("echo 3 > '/sys/class/leds/plum:red:ring1/brightness'");
   });
 });

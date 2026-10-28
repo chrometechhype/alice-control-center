@@ -45,6 +45,16 @@ export function rememberColors(colors: number[][], on = true): void {
   write(next);
 }
 
+/** Puts back a whole remembered state — used when «Сброс» restores the point saved before an effect. */
+export function rememberState(next: LedState): void {
+  const copy: LedState = {
+    colors: next.colors ? next.colors.map((color) => [...color]) : null,
+    on: next.on,
+  };
+  state = copy;
+  write(copy);
+}
+
 export function rememberOff(): void {
   const current = load();
   const next: LedState = { colors: current.colors, on: false };

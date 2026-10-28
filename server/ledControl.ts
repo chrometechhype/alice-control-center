@@ -3,7 +3,8 @@ import { ACTION_READY_WAIT_MS, connectionManager } from './connection.ts';
 import type { StationAdapter } from './adapters/StationAdapter.ts';
 import { AccError } from './errors.ts';
 import { eventLog } from './events.ts';
-import { ledState, rememberColors, rememberNative, rememberOff } from './ledState.ts';
+import { ledState, rememberColors, rememberNative, rememberOff, rememberState } from './ledState.ts';
+import type { LedState } from './ledState.ts';
 import { shQuote } from './util.ts';
 
 export function zonesFromCapabilities(): LedZone[] {
@@ -78,10 +79,41 @@ function nativeLines(zones: LedZone[]): string[] {
  * animation frame simply stayed frozen — the «зависла на одном цвете» bug.
  */
 export function restoreLines(zones: LedZone[]): string[] {
-  const state = ledState();
+  return linesForState(zones, ledState());
+}
+
+function linesForState(zones: LedZone[], state: LedState): string[] {
   if (!state.on) return offLines(zones);
   if (state.colors?.length) return writeLines(zones, state.colors);
   return nativeLines(zones);
+}
+
+/**
+ * «Сброс» promises the colour from *before* the effect, and the ring itself remembers nothing. The
+ * point is captured once, when the first effect of a session starts: a random colour already counted
+ * as a saved colour, so restoring the saved state simply wrote that random colour back and reset
+ * looked broken. A deliberate apply, power change or hand-over to Alice ends the session and clears
+ * the point, because that state is the new "before".
+ */
+let restorePoint: LedState | null = null;
+
+export function markRestorePoint(): void {
+  restorePoint ??= ledState();
+}
+
+export function clearRestorePoint(): void {
+  restorePoint = null;
+}
+
+export function restorePointLines(zones: LedZone[]): string[] {
+  return linesForState(zones, restorePoint ?? ledState());
+}
+
+/** After a successful reset the ring really is at the point, so «Включить» must return there too. */
+export function commitRestorePoint(): void {
+  if (!restorePoint) return;
+  rememberState(restorePoint);
+  restorePoint = null;
 }
 
 function readBackScript(zones: LedZone[]): string {
