@@ -337,6 +337,17 @@ export const BT_DEVICES_MARK = '@@ACC_DEVICES@@';
 export const BT_PAIRED_MARK = '@@ACC_PAIRED@@';
 export const BT_CONNECTED_MARK = '@@ACC_CONNECTED@@';
 
+/**
+ * One shell line that runs four bluetoothctl commands with markers between them. The caller prefixes
+ * only the first one, so every later part spells `bluetoothctl` itself — a bare `devices` would run
+ * as a shell command, fail with «not found» and leave the panel with an empty device list.
+ */
+export function btBatchCommand(): string {
+  return `show; echo ${BT_DEVICES_MARK}; bluetoothctl devices;`
+    + ` echo ${BT_PAIRED_MARK}; bluetoothctl devices Paired;`
+    + ` echo ${BT_CONNECTED_MARK}; bluetoothctl devices Connected`;
+}
+
 export interface BtBatch {
   show: string;
   known: string;

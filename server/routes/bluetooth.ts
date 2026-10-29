@@ -5,12 +5,10 @@ import { AccError } from '../errors.ts';
 import { eventLog } from '../events.ts';
 import { asyncRoute, sendOk } from '../http.ts';
 import {
-  BT_CONNECTED_MARK,
-  BT_DEVICES_MARK,
-  BT_PAIRED_MARK,
   bluetoothPairedFilterWorks,
   bluetoothSessionConnected,
   bluetoothSessionPaired,
+  btBatchCommand,
   explainBtFailure,
   parseBluetoothctlShow,
   parseBtBatch,
@@ -101,12 +99,7 @@ interface BtBatchResult {
  * everything, which is how a pairing the column had lost looked like a working one.
  */
 async function readBtBatch(): Promise<BtBatchResult> {
-  const batch = await runBluetoothctl(
-    `show; echo ${BT_DEVICES_MARK}; devices;`
-      + ` echo ${BT_PAIRED_MARK}; devices Paired;`
-      + ` echo ${BT_CONNECTED_MARK}; devices Connected`,
-    24_000,
-  );
+  const batch = await runBluetoothctl(btBatchCommand(), 24_000);
   const parts = parseBtBatch(batch.stdout);
   const bonded = new Set(parseDeviceLines(parts.paired).map((device) => device.address));
   const connected = new Set(parseDeviceLines(parts.connected).map((device) => device.address));

@@ -3,6 +3,7 @@ import {
   bluetoothPairedFilterWorks,
   bluetoothSessionConnected,
   bluetoothSessionPaired,
+  btBatchCommand,
   computeCpuPct,
   dirTreeCommand,
   dirWalkCommand,
@@ -111,6 +112,18 @@ describe('parseBluetoothctlShow', () => {
 });
 
 describe('parseBtBatch', () => {
+  it('runs bluetoothctl for every part, not just the first one', () => {
+    const command = btBatchCommand();
+    const calls = command.split(';').map((part) => part.trim()).filter((part) => part.startsWith('bluetoothctl'));
+    expect(calls).toEqual([
+      'bluetoothctl devices',
+      'bluetoothctl devices Paired',
+      'bluetoothctl devices Connected',
+    ]);
+    // The caller prefixes «bluetoothctl» to the whole line, so the first part is a bare `show`.
+    expect(command.startsWith('show;')).toBe(true);
+  });
+
   it('splits the single bluetoothctl exec back into its four answers', () => {
     const batch = [
       'Controller 11:22:33:44:55:66 (public)',
