@@ -11,6 +11,7 @@ import type {
   DeviceInfo,
   MetricsSample,
   PublicSettings,
+  RepoInsights,
   ThemeMode,
   WsMessage,
 } from '@shared/types';
@@ -41,6 +42,7 @@ export const store = reactive({
   eventTotal: 0,
   backups: [] as BackupManifest[],
   backupsLoaded: false,
+  insights: null as RepoInsights | null,
   wsState: 'offline' as 'offline' | 'connecting' | 'online',
   theme: 'light' as 'light' | 'dark',
   themeMode: 'system' as ThemeMode,
@@ -239,6 +241,18 @@ export async function refreshBackups(): Promise<void> {
   }>('/backups');
   store.backups = result.backups;
   store.backupsLoaded = true;
+}
+
+/**
+ * The endpoint answers only for the machine that runs the repository and returns a plain 404 to
+ * every other panel, so a failure here is the normal case and stays silent.
+ */
+export async function loadInsights(force = false): Promise<void> {
+  try {
+    store.insights = await api.get<RepoInsights>(`/insights${force ? '?force=1' : ''}`, 20_000);
+  } catch {
+    store.insights = null;
+  }
 }
 
 export async function refreshMetrics(): Promise<void> {

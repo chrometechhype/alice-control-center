@@ -579,3 +579,15 @@ export interface UpdateInstallResult {
   version: string;
   message: string;
 }
+
+/** Public GitHub numbers for the repository owner: how many archives were downloaded. */
+export interface RepoInsights {
+  repo: string;
+  totalDownloads: number;
+  releases: Array<{ version: string; downloads: number; publishedAt: string | null }>;
+  latest: { version: string; downloads: number; publishedAt: string | null } | null;
+  stars: number;
+  forks: number;
+  watchers: number;
+  checkedAt: number;
+}

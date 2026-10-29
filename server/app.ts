@@ -27,6 +27,7 @@ import { pluginsRouter } from './routes/plugins.ts';
 import { automationRouter } from './routes/automation.ts';
 import { aiRouter } from './routes/ai.ts';
 import { updatesRouter } from './routes/updates.ts';
+import { insightsRouter } from './routes/insights.ts';
 import { currentVersion } from './update.ts';
 
 let listenersAttached = false;
@@ -104,6 +105,7 @@ export function createApp(): AppBundle {
   app.use('/api/automation', automationRouter);
   app.use('/api/ai', aiRouter);
   app.use('/api/updates', updatesRouter);
+  app.use('/api/insights', insightsRouter);
 
   app.use('/api', (_req, res) => {
     sendError(res, 404, 'NOT_FOUND', 'Маршрут не найден');

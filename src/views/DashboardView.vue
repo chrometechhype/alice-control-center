@@ -10,17 +10,21 @@ import {
   ChevronRight,
   Copy,
   Cpu,
+  Download,
   Eye,
   EyeOff,
   FolderOpen,
+  GitFork,
   HardDrive,
   Info,
   Lightbulb,
   MemoryStick,
+  Package,
   RefreshCw,
   ShieldCheck,
   Signal,
   SquareTerminal,
+  Star,
   Thermometer,
   Volume2,
   Wifi,
@@ -36,7 +40,7 @@ import DevicePortrait from '@/components/DevicePortrait.vue';
 import VolumeControl from '@/components/VolumeControl.vue';
 import { detectDeviceVisual } from '@/lib/deviceVisual';
 import { api, errorMessage } from '@/lib/api';
-import { everConnected, isConnected, pushToast, reconnectDevice, refreshBackups, refreshProbe, store } from '@/lib/store';
+import { everConnected, isConnected, loadInsights, pushToast, reconnectDevice, refreshBackups, refreshProbe, store } from '@/lib/store';
 import {
   clamp,
   formatBytes,
@@ -224,7 +228,25 @@ function eventIcon(level: string) {
 
 onMounted(() => {
   void refreshBackups().catch(() => undefined);
+  void loadInsights();
 });
+
+const insightsBusy = ref(false);
+
+async function reloadInsights(): Promise<void> {
+  insightsBusy.value = true;
+  try {
+    await loadInsights(true);
+  } finally {
+    insightsBusy.value = false;
+  }
+}
+
+const countFormat = new Intl.NumberFormat('ru-RU');
+
+function formatCount(value: number): string {
+  return countFormat.format(value);
+}
 
 watch(
   isConnected,
@@ -277,6 +299,37 @@ watch(
       <AlertTriangle :size="16" />
       <div>{{ store.status.lastError }}</div>
     </div>
+
+    <section v-if="store.insights" class="owner-strip" aria-label="Статистика репозитория">
+      <span class="owner-strip__item">
+        <Download :size="15" />
+        <strong>{{ formatCount(store.insights.totalDownloads) }}</strong>
+        скачиваний
+      </span>
+      <span v-if="store.insights.latest" class="owner-strip__item">
+        <Package :size="15" />
+        <strong>{{ formatCount(store.insights.latest.downloads) }}</strong>
+        у {{ store.insights.latest.version }}
+      </span>
+      <span class="owner-strip__item">
+        <Star :size="15" />
+        {{ formatCount(store.insights.stars) }}
+      </span>
+      <span class="owner-strip__item">
+        <GitFork :size="15" />
+        {{ formatCount(store.insights.forks) }}
+      </span>
+      <span class="owner-strip__note">обновлено {{ formatRelative(store.insights.checkedAt) }}</span>
+      <button
+        type="button"
+        class="btn btn--ghost btn--icon btn--sm"
+        title="Обновить цифры"
+        :disabled="insightsBusy"
+        @click="reloadInsights"
+      >
+        <RefreshCw :size="14" :class="{ spin: insightsBusy }" />
+      </button>
+    </section>
 
     <template v-if="isConnected">
       <div class="ov">
@@ -617,6 +670,37 @@ watch(
 </template>
 
 <style scoped>
+.owner-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.owner-strip__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.owner-strip__item strong {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.owner-strip__note {
+  margin-left: auto;
+  font-size: 11.5px;
+}
+
 .ov {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));

@@ -34,6 +34,12 @@ interface PersistedConfig {
   settings: AppSettings;
   lanToken?: string;
   ai?: AiConfig;
+  owner?: boolean;
+}
+
+export function ownerMode(): boolean {
+  if (process.env.ACC_OWNER === '1') return true;
+  return loadConfig().owner === true;
 }
 
 export function ensureDataDirs(): void {
@@ -51,6 +57,7 @@ export function loadConfig(): PersistedConfig {
       settings: { ...DEFAULT_SETTINGS, ...(raw.settings ?? {}) },
       lanToken: raw.lanToken,
       ai: raw.ai,
+      owner: raw.owner === true,
     };
   } catch {
     return { settings: { ...DEFAULT_SETTINGS } };
