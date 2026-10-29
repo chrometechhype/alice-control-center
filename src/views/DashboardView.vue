@@ -26,6 +26,7 @@ import {
   SquareTerminal,
   Star,
   Thermometer,
+  Users,
   Volume2,
   Wifi,
   Workflow,
@@ -40,7 +41,7 @@ import DevicePortrait from '@/components/DevicePortrait.vue';
 import VolumeControl from '@/components/VolumeControl.vue';
 import { detectDeviceVisual } from '@/lib/deviceVisual';
 import { api, errorMessage } from '@/lib/api';
-import { everConnected, isConnected, loadInsights, pushToast, reconnectDevice, refreshBackups, refreshProbe, store } from '@/lib/store';
+import { everConnected, isConnected, loadInsights, loadPresence, pushToast, reconnectDevice, refreshBackups, refreshProbe, store } from '@/lib/store';
 import {
   clamp,
   formatBytes,
@@ -229,6 +230,7 @@ function eventIcon(level: string) {
 onMounted(() => {
   void refreshBackups().catch(() => undefined);
   void loadInsights();
+  void loadPresence();
 });
 
 const insightsBusy = ref(false);
@@ -236,7 +238,7 @@ const insightsBusy = ref(false);
 async function reloadInsights(): Promise<void> {
   insightsBusy.value = true;
   try {
-    await loadInsights(true);
+    await Promise.all([loadInsights(true), loadPresence()]);
   } finally {
     insightsBusy.value = false;
   }
@@ -310,6 +312,11 @@ watch(
         <Package :size="15" />
         <strong>{{ formatCount(store.insights.latest.downloads) }}</strong>
         у {{ store.insights.latest.version }}
+      </span>
+      <span v-if="store.presence.online != null" class="owner-strip__item" :title="`Запущенные панели с включённой галочкой «Участвовать в статистике», за последние ${Math.round(store.presence.windowSec / 60)} минут`">
+        <Users :size="15" />
+        <strong>{{ formatCount(store.presence.online) }}</strong>
+        в сети
       </span>
       <span class="owner-strip__item">
         <Star :size="15" />

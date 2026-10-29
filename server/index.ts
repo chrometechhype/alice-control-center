@@ -4,9 +4,11 @@ import { getSettings } from './config.ts';
 import { connectionManager } from './connection.ts';
 import { eventLog } from './events.ts';
 import { setShutdownHandler } from './lifecycle.ts';
+import { startPresence } from './presence.ts';
 
 eventLog.init();
 initAutomation();
+startPresence();
 
 const { server } = createApp();
 const settings = getSettings();

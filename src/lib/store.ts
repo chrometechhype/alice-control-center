@@ -43,6 +43,7 @@ export const store = reactive({
   backups: [] as BackupManifest[],
   backupsLoaded: false,
   insights: null as RepoInsights | null,
+  presence: { online: null as number | null, windowSec: 300 },
   wsState: 'offline' as 'offline' | 'connecting' | 'online',
   theme: 'light' as 'light' | 'dark',
   themeMode: 'system' as ThemeMode,
@@ -252,6 +253,17 @@ export async function loadInsights(force = false): Promise<void> {
     store.insights = await api.get<RepoInsights>(`/insights${force ? '?force=1' : ''}`, 20_000);
   } catch {
     store.insights = null;
+  }
+}
+
+export async function loadPresence(): Promise<void> {
+  try {
+    store.presence = await api.get<{ online: number | null; windowSec: number }>(
+      '/insights/presence',
+      15_000,
+    );
+  } catch {
+    store.presence = { online: null, windowSec: 300 };
   }
 }
 
