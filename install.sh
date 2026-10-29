@@ -104,8 +104,35 @@ mkdir -p "$install_dir"
 cp -R "$source_dir"/. "$install_dir"/
 chmod +x "$install_dir/start.sh" "$install_dir/full-debug.sh" 2>/dev/null || true
 
+# Since 1.0.0-alpha.13 tsx is a runtime dependency, so test and build tooling is skipped; older
+# archives keep tsx in devDependencies and need the full install.
+if node -e 'process.exit(require(process.argv[1]).dependencies.tsx ? 0 : 1)' \
+  "$install_dir/package.json" 2>/dev/null; then
+  npm_flags='--omit=dev'
+else
+  npm_flags=''
+fi
+
 say 'Installing dependencies...'
-(cd "$install_dir" && npm install --no-audit --no-fund) || fail 'npm install failed.'
+dep_attempt=1
+while :; do
+  # shellcheck disable=SC2086
+  if (cd "$install_dir" && npm install --no-audit --no-fund $npm_flags \
+    --fetch-retries=5 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=60000 \
+    --fetch-timeout=120000); then
+    break
+  fi
+  if [ "$dep_attempt" -ge 3 ]; then
+    say ''
+    say 'npm could not download the packages. The files are unpacked, but the panel will not start.'
+    say 'Check the internet, a proxy or an npm registry mirror, then finish the install with:'
+    say "  cd \"$install_dir\" && npm install"
+    fail 'npm install failed three times.'
+  fi
+  dep_attempt=$((dep_attempt + 1))
+  say "npm install failed, retrying ($dep_attempt of 3)..."
+  sleep 5
+done
 
 cat > "$install_dir/acc-start.sh" <<'LAUNCHER'
 #!/bin/sh

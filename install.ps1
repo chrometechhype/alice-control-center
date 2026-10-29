@@ -189,12 +189,23 @@ function Install-AliceControlCenter {
     try {
       Write-Host 'Installing dependencies...'
       $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
-      if ($npm) {
-        & $npm.Source install --no-audit --no-fund
-      } else {
-        cmd /c "npm install --no-audit --no-fund"
+      if (-not $npm) {
+        throw 'npm.cmd was not found. Reinstall Node.js 20+ from https://nodejs.org/ and run the installer again.'
       }
-      if ($LASTEXITCODE -ne 0) { throw "npm install failed with code $LASTEXITCODE." }
+      $npmArgs = @('install', '--no-audit', '--no-fund', '--fetch-retries=5',
+        '--fetch-retry-mintimeout=2000', '--fetch-retry-maxtimeout=60000', '--fetch-timeout=120000')
+      # Since 1.0.0-alpha.13 tsx is a runtime dependency, so test and build tooling is skipped.
+      $manifest = Get-Content -Raw (Join-Path $installDir 'package.json') | ConvertFrom-Json
+      if ($manifest.dependencies.tsx) { $npmArgs += '--omit=dev' }
+      for ($attempt = 1; $attempt -le 3; $attempt += 1) {
+        & $npm.Source @npmArgs
+        if ($LASTEXITCODE -eq 0) { break }
+        if ($attempt -eq 3) {
+          throw "npm install failed with code $LASTEXITCODE. Check the internet, a proxy or an npm registry mirror, then run the installer again."
+        }
+        Write-Host "npm install failed, retrying ($($attempt + 1) of 3)..."
+        Start-Sleep -Seconds 5
+      }
     } finally {
       Pop-Location
     }

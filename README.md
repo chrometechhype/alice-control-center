@@ -125,6 +125,10 @@ curl -fsSL https://raw.githubusercontent.com/chrometechhype/alice-control-center
 - ставит панель в `~/.local/share/AliceControlCenter`, сохраняя `data/` при обновлении;
 - запускает панель в фоне на `http://127.0.0.1:8722`, журнал — `acc.log` в папке установки.
 
+Установке нужен доступ к `registry.npmjs.org`: установщик скачивает зависимости и при обрыве
+повторяет попытку трижды. Если registry закрыт, настройте прокси или зеркало
+(`npm config set registry …`) и запустите установщик снова.
+
 Другая папка или конкретная версия:
 
 ```sh
