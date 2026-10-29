@@ -1,4 +1,5 @@
 import { createApp } from './app.ts';
+import { startAudioRouteWatchdog } from './audioRoute.ts';
 import { initAutomation } from './automation.ts';
 import { getSettings } from './config.ts';
 import { connectionManager } from './connection.ts';
@@ -9,6 +10,7 @@ import { startPresence } from './presence.ts';
 eventLog.init();
 initAutomation();
 startPresence();
+startAudioRouteWatchdog();
 
 const { server } = createApp();
 const settings = getSettings();

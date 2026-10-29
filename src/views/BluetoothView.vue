@@ -6,6 +6,7 @@ import {
   BluetoothConnected,
   BluetoothOff,
   BluetoothSearching,
+  Headphones,
   Info,
   Link2,
   LoaderCircle,
@@ -13,6 +14,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Smartphone,
+  Speaker,
   Trash2,
   Unplug,
 } from '@lucide/vue';
@@ -39,11 +41,26 @@ interface BtDevice {
   paired: boolean;
 }
 
+interface AudioRoute {
+  on: boolean;
+  address: string | null;
+  restarted: boolean;
+  skipped?: boolean;
+  error?: string;
+}
+
 interface BtStatus {
   controller: BtController;
   devices: BtDevice[];
   scanning: boolean;
+  audioRoute: { on: boolean; address: string | null };
   raw: string;
+}
+
+interface ConnectResult {
+  address: string;
+  connected: boolean;
+  audioRoute?: AudioRoute;
 }
 
 const status = ref<BtStatus | null>(null);
@@ -58,6 +75,7 @@ const powerTarget = ref<boolean | null>(null);
 const powerBusy = ref(false);
 const discoverableTarget = ref<boolean | null>(null);
 const discoverableBusy = ref(false);
+const audioRouteBusy = ref(false);
 
 const btCap = computed(() => store.capabilities?.bluetooth);
 const available = computed(() => Boolean(btCap.value?.available));
@@ -65,6 +83,10 @@ const devices = computed(() => status.value?.devices ?? []);
 const connectedDevices = computed(() => devices.value.filter((device) => device.connected));
 const bondedCount = computed(() => devices.value.filter((device) => device.paired).length);
 const controller = computed(() => status.value?.controller ?? null);
+const routedAddress = computed(() => (status.value?.audioRoute?.on ? status.value.audioRoute.address : null));
+const routedDevice = computed(
+  () => devices.value.find((device) => device.address === routedAddress.value) ?? null,
+);
 
 const controllerName = computed(
   () =>
@@ -114,9 +136,16 @@ async function connect(device: BtDevice): Promise<void> {
   busyAddress.value = device.address;
   error.value = '';
   try {
-    await api.post('/bluetooth/connect', { address: device.address });
-    pushToast('ok', `Подключено: ${device.name}`);
+    const result = await api.post<ConnectResult>('/bluetooth/connect', { address: device.address });
     await load();
+    const route = result.audioRoute;
+    if (route?.on) {
+      pushToast('ok', `Подключено: ${device.name}. Звук станции идёт в наушники`);
+    } else if (route?.error) {
+      pushToast('error', `Подключено: ${device.name}. Но звук остался в колонке: ${route.error}`);
+    } else {
+      pushToast('ok', `Подключено: ${device.name}`);
+    }
   } catch (caught) {
     error.value = errorMessage(caught);
     pushToast('error', error.value);
@@ -129,14 +158,37 @@ async function disconnect(device: BtDevice): Promise<void> {
   busyAddress.value = device.address;
   error.value = '';
   try {
-    await api.post('/bluetooth/disconnect', { address: device.address });
+    const result = await api.post<{ audioRoute?: AudioRoute | null }>('/bluetooth/disconnect', {
+      address: device.address,
+    });
     pushToast('info', `Отключено: ${device.name}`);
+    if (result.audioRoute?.error) pushToast('error', result.audioRoute.error);
     await load();
   } catch (caught) {
     error.value = errorMessage(caught);
     pushToast('error', error.value);
   } finally {
     busyAddress.value = '';
+  }
+}
+
+async function setAudioRoute(on: boolean): Promise<void> {
+  audioRouteBusy.value = true;
+  error.value = '';
+  try {
+    const result = await api.post<AudioRoute & { name?: string }>('/bluetooth/audio-route', { on });
+    await load();
+    if (!on) {
+      if (result.error) pushToast('error', result.error);
+      else pushToast('info', 'Звук снова в колонке');
+    } else {
+      pushToast('ok', `Звук станции идёт в наушники${result.name ? `: ${result.name}` : ''}`);
+    }
+  } catch (caught) {
+    error.value = errorMessage(caught);
+    pushToast('error', error.value);
+  } finally {
+    audioRouteBusy.value = false;
   }
 }
 
@@ -200,7 +252,8 @@ onMounted(() => {
         <h1>Bluetooth</h1>
         <p>
           Реальный адаптер колонки через <span class="code-inline">bluetoothctl</span>. ACC сопрягает
-          устройства без ручного PIN и не устанавливает Bluetooth-демоны.
+          устройства без ручного PIN и не устанавливает Bluetooth-демоны. Когда к колонке подключены
+          наушники, голос Алисы и звуки панели идут в них.
         </p>
       </div>
       <div class="page-head__actions">
@@ -246,6 +299,19 @@ onMounted(() => {
       <div v-if="error" class="alert alert--error">
         <AlertTriangle :size="16" />
         <div>{{ error }}</div>
+      </div>
+
+      <div v-if="routedAddress" class="alert alert--info">
+        <Headphones :size="16" />
+        <div style="flex: 1">
+          Звук станции идёт в наушники{{ routedDevice ? ` «${routedDevice.name}»` : '' }}: Алиса,
+          музыка и звуки из панели играют там.
+        </div>
+        <button class="btn btn--soft btn--sm" :disabled="audioRouteBusy" @click="setAudioRoute(false)">
+          <LoaderCircle v-if="audioRouteBusy" :size="14" class="spin" />
+          <Speaker v-else :size="14" />
+          Вернуть в колонку
+        </button>
       </div>
 
       <div class="grid grid-3">
@@ -307,6 +373,7 @@ onMounted(() => {
                   <span v-if="device.paired" class="pill pill--muted">сопряжено</span>
                   <span v-else class="pill pill--warn">только в кэше поиска</span>
                   <span v-if="device.connected" class="pill pill--ok">подключено</span>
+                  <span v-if="routedAddress === device.address" class="pill pill--ok">звук здесь</span>
                 </div>
               </div>
               <div class="row" style="gap: 4px">
@@ -323,12 +390,22 @@ onMounted(() => {
                 <button
                   v-else
                   class="btn btn--sm"
-                  :disabled="Boolean(busyAddress)"
+                  :disabled="Boolean(busyAddress) || audioRouteBusy"
                   @click="disconnect(device)"
                 >
                   <LoaderCircle v-if="busyAddress === device.address" :size="14" class="spin" />
                   <Unplug v-else :size="14" />
                   Отключить
+                </button>
+                <button
+                  v-if="device.connected && routedAddress !== device.address"
+                  class="btn btn--ghost btn--icon btn--sm"
+                  title="Вывести звук станции в это устройство"
+                  :disabled="audioRouteBusy"
+                  @click="setAudioRoute(true)"
+                >
+                  <LoaderCircle v-if="audioRouteBusy" :size="14" class="spin" />
+                  <Headphones v-else :size="14" />
                 </button>
                 <button
                   class="btn btn--ghost btn--icon btn--sm"
@@ -390,6 +467,7 @@ onMounted(() => {
               <li><Info :size="14" /><span>Сканирование ограничено 20 секундами.</span></li>
               <li><Info :size="14" /><span>Ручной PIN не вводится: подтверждение происходит на телефоне или устройстве.</span></li>
               <li><Info :size="14" /><span>Выключение адаптера требует подтверждения.</span></li>
+              <li><Info :size="14" /><span>Если наушники отключатся сами, звук вернётся в колонку в течение полуминуты.</span></li>
             </ul>
             <div class="alert alert--warn mt-12">
               <AlertTriangle :size="15" />

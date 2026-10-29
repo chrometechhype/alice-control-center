@@ -382,36 +382,50 @@ export function bluetoothPairedFilterWorks(batch: BtBatch): boolean {
 }
 
 /**
- * `connect` prints «Connection successful» before the link is really up, so the interactive session
- * ends with `info` and its «Connected: yes/no» is the answer the panel reports. Without an info
- * block the successful line is the only evidence there is.
+ * BlueZ addresses a device as `/org/bluez/<controller>/dev_XX_XX_…`. The controller comes from the
+ * probe; firmware without one still has hci0, and anything unexpected falls back to it.
  */
-export function bluetoothSessionConnected(stdout: string): boolean {
-  const plain = stdout.replace(/\x1b\[[0-9;]*m/g, '');
-  if (/Connected:\s*yes/i.test(plain)) return true;
-  if (/Connected:\s*no/i.test(plain)) return false;
-  return /Connection successful/i.test(plain);
-}
-
-/** Pairing is «already done» when BlueZ says so — a second `pair` on a bonded device is not a failure. */
-export function bluetoothSessionPaired(stdout: string, fallback: boolean): boolean {
-  const plain = stdout.replace(/\x1b\[[0-9;]*m/g, '');
-  if (/Pairing successful/i.test(plain)) return true;
-  if (/AlreadyExists|already paired/i.test(plain)) return true;
-  if (/Failed to pair/i.test(plain)) return false;
-  return fallback;
+export function bluezDevicePath(adapter: string | null | undefined, address: string): string {
+  const controller = /^hci\d+$/.test(adapter ?? '') ? adapter : 'hci0';
+  return `/org/bluez/${controller}/dev_${address.toUpperCase().replace(/:/g, '_')}`;
 }
 
 /**
- * `bluetoothctl` answers in English, and BlueZ errors are useless without context: «Device XX not
- * available» means BlueZ has no live object for that address, which almost always means the earbuds
- * sleep in the case, are out of range or are held by the phone. The raw text goes to the journal;
- * this is what the person in front of the panel reads, together with the action that fixes it.
+ * bluetoothctl's interactive output is prompts, echoed commands and backspaces; taking its last line
+ * gave the panel «[bluetooth]# [bluetooth]#» instead of the reason. This keeps the line that says
+ * something — a BlueZ error or a failure — and falls back to the last real line.
+ */
+export function btFailureText(output: string): string {
+  const plain = output
+    .replace(/\x1b\[[0-9;]*m/g, '')
+    .replace(/[\b]/g, '')
+    .replace(/\r/g, '\n')
+    .replace(/\[bluetooth\]#/g, '');
+  const lines = plain
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return (
+    lines.find((line) =>
+      /error org\.bluez|failed|authentication|not available|page timeout|host is down|no such device|invalid arguments|not connected|busy|in progress|no agent|timed out/i.test(line),
+    ) ?? lines.at(-1) ?? ''
+  );
+}
+
+/**
+ * `bluetoothctl` and BlueZ answer in English, and their errors are useless without context: «Device
+ * XX not available» means BlueZ has no live object for that address, which almost always means the
+ * earbuds sleep in the case, are out of range or are held by the phone. The raw text goes to the
+ * journal; this is what the person in front of the panel reads, together with the action that fixes it.
  */
 export function explainBtFailure(output: string, address: string): string {
-  const text = output.trim();
-  if (!text) return 'bluetoothctl не ответил — колонка не отвечает.';
+  const text = btFailureText(output);
+  if (!text) return 'Bluetooth-устройство не ответило — колонка не отвечает или команда не дошла.';
   const lower = text.toLowerCase();
+  if (lower.includes('le-connection-abort-by-local') || lower.includes('connection abort'))
+    return `Устройство ${address} оборвало подключение. Так бывает, когда наушники не в режиме сопряжения или уже заняты телефоном: отключите их там, зажмите кнопку сопряжения и повторите.`;
+  if (lower.includes('failed to register agent') || lower.includes('no agent is registered'))
+    return 'Колонка не смогла поднять Bluetooth-агента. Подождите пару секунд и повторите — если не помогает, перезагрузите колонку.';
   if (lower.includes('not powered'))
     return 'Bluetooth-адаптер колонки выключен. Нажмите «Включить» и повторите.';
   if (lower.includes('alreadyexists') || lower.includes('already paired'))
@@ -430,7 +444,9 @@ export function explainBtFailure(output: string, address: string): string {
   if (lower.includes('not connected')) return `${address} уже отключено — активного соединения нет.`;
   if (lower.includes('busy') || lower.includes('in progress'))
     return 'Адаптер колонки занят другим Bluetooth-действием. Подождите 10-15 секунд и повторите.';
-  return `Bluetooth-действие не удалось: ${text.split('\n').filter(Boolean).at(-1) ?? text}`;
+  if (lower.includes('unknownobject') || lower.includes('does not exist'))
+    return `Колонка не знает адрес ${address}. Нажмите «Сканировать», чтобы найти устройство заново.`;
+  return `Bluetooth-действие не удалось: ${text}`;
 }
 
 export interface AmixerMaster {

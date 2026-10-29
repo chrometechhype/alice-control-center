@@ -6,14 +6,19 @@ import { eventLog } from '../events.ts';
 import { asyncRoute, sendOk } from '../http.ts';
 import {
   bluetoothPairedFilterWorks,
-  bluetoothSessionConnected,
-  bluetoothSessionPaired,
+  bluezDevicePath,
   btBatchCommand,
   explainBtFailure,
   parseBluetoothctlShow,
   parseBtBatch,
   type BtBatch,
 } from '../parse.ts';
+import {
+  audioRouteState,
+  switchAudioToHeadphones,
+  switchAudioToSpeaker,
+  type AudioRouteResult,
+} from '../audioRoute.ts';
 
 export const bluetoothRouter = Router();
 
@@ -53,33 +58,55 @@ async function runBluetoothctl(args: string, timeoutMs = 20_000) {
   );
 }
 
+function bluezPath(address: string): string {
+  const adapter = connectionManager.getCapabilities()?.bluetooth.details?.adapter;
+  return bluezDevicePath(typeof adapter === 'string' ? adapter : null, address);
+}
+
 /**
- * One interactive bluetoothctl with a script on stdin. A plain `bluetoothctl pair XX` runs with no
- * agent at all, and BlueZ answers «Failed to pair: org.bluez.Error.NoAgent» — which is why pairing
- * worked from a phone but not from the panel. Agent, pairing and connection share one process, so
- * the agent is still registered when the target asks for it.
+ * Pairing and connecting go through D-Bus, not an interactive bluetoothctl. On this firmware the
+ * interactive `agent NoInputNoOutput` answers «Failed to register agent object», and one-shot
+ * `bluetoothctl pair` prints «Attempting…» and exits before the result — the panel then read a prompt
+ * line as the error. `Device1.Pair`/`Device1.Connect` block until BlueZ has a real answer, and no
+ * separate agent is needed for the confirmation.
  */
-async function bluetoothSession(commands: string[], timeoutMs = 45_000) {
-  const script = ['agent NoInputNoOutput', 'default-agent', ...commands, 'quit'].join('\n');
-  return connectionManager.stationRead((adapter) =>
-    adapter.exec(`bluetoothctl <<'ACC_BT'\n${script}\nACC_BT`, { timeoutMs, maxBytes: 200_000 }),
+async function dbusDevice(method: string, address: string, timeoutMs: number) {
+  return execOnStation(
+    `dbus-send --system --print-reply --dest=org.bluez ${bluezPath(address)} org.bluez.Device1.${method}`,
+    timeoutMs,
+  );
+}
+
+async function setTrusted(address: string) {
+  return execOnStation(
+    `dbus-send --system --print-reply --dest=org.bluez ${bluezPath(address)} org.freedesktop.DBus.Properties.Set`
+      + ' string:org.bluez.Device1 string:Trusted variant:boolean:true',
+    15_000,
   );
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function connectDevice(address: string, knownPaired: boolean): Promise<{ connected: boolean; paired: boolean; output: string }> {
+  const steps: string[] = [];
   // Trust before connecting: a trusted gadget is allowed to reconnect on its own later, and BlueZ
   // refuses some audio devices a second connect while they are untrusted.
-  const commands = knownPaired
-    ? [`trust ${address}`, `connect ${address}`, `info ${address}`]
-    : [`trust ${address}`, `pair ${address}`, `connect ${address}`, `info ${address}`];
-  const result = await bluetoothSession(commands);
-  const plain = `${result.stdout}\n${result.stderr}`;
+  const trust = await setTrusted(address);
+  steps.push(`${trust.stdout}\n${trust.stderr}`);
+  if (!knownPaired) {
+    const pair = await dbusDevice('Pair', address, 60_000);
+    steps.push(`${pair.stdout}\n${pair.stderr}`);
+  }
+  const connect = await dbusDevice('Connect', address, 60_000);
+  steps.push(`${connect.stdout}\n${connect.stderr}`);
+  // The call's own error does not decide the result: BlueZ can report a local abort and still bring
+  // the link up through its audio stack. The device list read after the attempt is the honest answer.
+  const after = await readBtBatch().catch(() => null);
+  const device = after?.devices.find((entry) => entry.address === address) ?? null;
   return {
-    connected: bluetoothSessionConnected(plain),
-    paired: bluetoothSessionPaired(plain, knownPaired),
-    output: plain.replace(/\x1b\[[0-9;]*m/g, '').trim(),
+    connected: device?.connected ?? connect.code === 0,
+    paired: device?.paired ?? knownPaired,
+    output: steps.join('\n').trim(),
   };
 }
 
@@ -116,6 +143,57 @@ async function readBtBatch(): Promise<BtBatchResult> {
   };
 }
 
+/**
+ * The station plays its own sound through the ALSA PCM `default`, which resolves to the speaker.
+ * Putting the sound into freshly connected headphones is a second step after the link is up; it is
+ * best-effort here so a failed switch never turns a working connection into an error.
+ */
+async function routeToHeadphones(address: string): Promise<AudioRouteResult> {
+  try {
+    const adapter = await connectionManager.awaitReady(9_000);
+    const result = await switchAudioToHeadphones(adapter, address);
+    if (result.on) {
+      eventLog.append({
+        level: 'info',
+        module: 'bluetooth',
+        operation: 'audio-route',
+        result: 'ok',
+        message: `Звук станции переключён в наушники ${address}`,
+      });
+    } else if (result.error) {
+      eventLog.append({
+        level: 'warn',
+        module: 'bluetooth',
+        operation: 'audio-route',
+        result: 'error',
+        message: `Звук остался в колонке: ${result.error}`,
+      });
+    }
+    return result;
+  } catch (caught) {
+    const error = caught instanceof Error ? caught.message : 'Станция не ответила';
+    return { on: false, address, restarted: false, error };
+  }
+}
+
+async function restoreSpeakerIfRouted(address: string | null): Promise<AudioRouteResult> {
+  const adapter = await connectionManager.awaitReady(9_000);
+  const state = await audioRouteState(adapter, 0);
+  if (!state.on) return { on: false, address: null, restarted: false };
+  if (address && state.address && state.address !== address) {
+    return { on: true, address: state.address, restarted: false };
+  }
+  const result = await switchAudioToSpeaker(adapter);
+  eventLog.append({
+    level: 'info',
+    module: 'bluetooth',
+    operation: 'audio-route',
+    result: result.error ? 'error' : 'ok',
+    message: result.error ?? 'Звук станции возвращён в колонку',
+  });
+  return result;
+}
+
 bluetoothRouter.get(
   '/status',
   asyncRoute(async (_req, res) => {
@@ -142,6 +220,9 @@ bluetoothRouter.get(
       );
     }
     const controller = parseBluetoothctlShow(batch.parts.show);
+    const route = await connectionManager
+      .stationRead((adapter) => audioRouteState(adapter))
+      .catch(() => ({ on: false, address: null }));
     sendOk(res, {
       controller: {
         adapter: capabilities.bluetooth.details?.adapter ?? null,
@@ -154,6 +235,7 @@ bluetoothRouter.get(
       },
       devices: batch.devices,
       scanning: Date.now() < scanUntil,
+      audioRoute: route,
       raw: batch.parts.show,
     });
   }),
@@ -220,7 +302,8 @@ bluetoothRouter.post(
     const before = await readBtBatch().catch(() => null);
     const known = before?.devices.find((device) => device.address === address) ?? null;
     if (known?.connected) {
-      sendOk(res, { address, connected: true, alreadyConnected: true, output: '' });
+      const audioRoute = await routeToHeadphones(address);
+      sendOk(res, { address, connected: true, alreadyConnected: true, audioRoute, output: '' });
       return;
     }
 
@@ -269,7 +352,14 @@ bluetoothRouter.post(
       result: 'ok',
       message: `Bluetooth: подключено устройство ${address}`,
     });
-    sendOk(res, { address, connected: true, paired: attempt.paired, output: attempt.output });
+    const audioRoute = await routeToHeadphones(address);
+    sendOk(res, {
+      address,
+      connected: true,
+      paired: attempt.paired,
+      audioRoute,
+      output: attempt.output,
+    });
   }),
 );
 
@@ -294,7 +384,8 @@ bluetoothRouter.post(
       result: 'ok',
       message: `Bluetooth: отключено устройство ${address}`,
     });
-    sendOk(res, { address, connected: false });
+    const audioRoute = await restoreSpeakerIfRouted(address).catch(() => null);
+    sendOk(res, { address, connected: false, audioRoute });
   }),
 );
 
@@ -324,7 +415,8 @@ bluetoothRouter.post(
       result: 'ok',
       message: `Bluetooth: устройство ${address} удалено из списка`,
     });
-    sendOk(res, { removed: address });
+    const audioRoute = await restoreSpeakerIfRouted(address).catch(() => null);
+    sendOk(res, { removed: address, audioRoute });
   }),
 );
 
@@ -350,9 +442,75 @@ bluetoothRouter.post(
       result: 'ok',
       message: `Bluetooth-адаптер ${parsed.data.on ? 'включён' : 'выключен'} вручную`,
     });
-    sendOk(res, { powered: parsed.data.on });
+    // Powering the radio off kills every link, so the sound must not stay pointed at a dead device.
+    const audioRoute = parsed.data.on
+      ? null
+      : await restoreSpeakerIfRouted(null).catch(() => null);
+    sendOk(res, { powered: parsed.data.on, audioRoute });
   }),
 );
+/** Devices BlueALSA has opened an A2DP source for — the only ones the station can actually play into. */
+async function a2dpSourceAddresses(): Promise<string[]> {
+  const adapter = await connectionManager.awaitReady(9_000);
+  const result = await adapter.exec('bluealsa-aplay -L 2>/dev/null', {
+    timeoutMs: 12_000,
+    maxBytes: 40_000,
+  });
+  const found = new Set<string>();
+  for (const match of result.stdout.matchAll(
+    /DEV=([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}),PROFILE=a2dp/g,
+  )) {
+    found.add(match[1].toUpperCase());
+  }
+  return [...found];
+}
+
+bluetoothRouter.post(
+  '/audio-route',
+  asyncRoute(async (req, res) => {
+    const parsed = z.object({ on: z.boolean() }).safeParse(req.body);
+    if (!parsed.success) throw new AccError('BAD_REQUEST', 'Нужно указать, куда выводить звук', 400);
+    if (!parsed.data.on) {
+      const adapter = await connectionManager.awaitReady(9_000);
+      const result = await switchAudioToSpeaker(adapter);
+      eventLog.append({
+        level: result.error ? 'warn' : 'info',
+        module: 'bluetooth',
+        operation: 'audio-route',
+        result: result.error ? 'error' : 'ok',
+        message: result.error ?? 'Звук станции возвращён в колонку',
+      });
+      sendOk(res, result);
+      return;
+    }
+    const ready = await a2dpSourceAddresses();
+    const batch = await readBtBatch();
+    const device =
+      batch.devices.find((entry) => entry.connected && ready.includes(entry.address)) ??
+      batch.devices.find((entry) => ready.includes(entry.address)) ??
+      null;
+    if (!device) {
+      throw new AccError(
+        'NO_AUDIO_DEVICE',
+        'Ни одни наушники не готовы принимать звук по A2DP. Подключите их заново — колонка ещё не подняла профиль.',
+        409,
+      );
+    }
+    const result = await routeToHeadphones(device.address);
+    if (!result.on) {
+      if (result.skipped) {
+        throw new AccError(
+          'NOT_AN_AUDIO_DEVICE',
+          'У этого устройства нет аудиовыхода — выводить звук в него нельзя.',
+          409,
+        );
+      }
+      throw new AccError('AUDIO_ROUTE_FAILED', result.error ?? 'Не удалось переключить звук', 502);
+    }
+    sendOk(res, { ...result, name: device.name });
+  }),
+);
+
 bluetoothRouter.post(
   '/discoverable',
   asyncRoute(async (req, res) => {

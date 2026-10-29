@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   bluetoothPairedFilterWorks,
-  bluetoothSessionConnected,
-  bluetoothSessionPaired,
+  bluezDevicePath,
   btBatchCommand,
+  btFailureText,
   computeCpuPct,
   dirTreeCommand,
   dirWalkCommand,
@@ -153,39 +153,32 @@ describe('parseBtBatch', () => {
   });
 });
 
-describe('bluetoothSessionConnected', () => {
-  it('trusts `info` over the premature «Connection successful» line', () => {
-    const output = [
-      'Attempting to connect to AA:BB:CC:11:22:33',
-      'Connection successful',
-      'Device AA:BB:CC:11:22:33 (public)',
-      'Connected: no',
-    ].join('\n');
-    expect(bluetoothSessionConnected(output)).toBe(false);
+describe('bluezDevicePath', () => {
+  it('builds the BlueZ object path from the controller and the address', () => {
+    expect(bluezDevicePath('hci0', 'a0:90:b5:7e:e4:94')).toBe('/org/bluez/hci0/dev_A0_90_B5_7E_E4_94');
+    expect(bluezDevicePath('hci1', 'AA:BB:CC:11:22:33')).toBe('/org/bluez/hci1/dev_AA_BB_CC_11_22_33');
   });
 
-  it('reads «Connected: yes» even with the coloured prompt in the way', () => {
-    expect(bluetoothSessionConnected('\x1b[0;94m[bluetooth]\x1b[0m# \tConnected: yes')).toBe(true);
-  });
-
-  it('falls back to the successful line when there is no info block', () => {
-    expect(bluetoothSessionConnected('[CHG] Device AA:BB:CC:11:22:33 Connected: yes')).toBe(true);
-    expect(bluetoothSessionConnected('Failed to connect: org.bluez.Error.Failed')).toBe(false);
+  it('falls back to hci0 when the probe did not name a controller', () => {
+    expect(bluezDevicePath(undefined, 'AA:BB:CC:11:22:33')).toBe('/org/bluez/hci0/dev_AA_BB_CC_11_22_33');
+    expect(bluezDevicePath('../../etc', 'AA:BB:CC:11:22:33')).toBe('/org/bluez/hci0/dev_AA_BB_CC_11_22_33');
   });
 });
 
-describe('bluetoothSessionPaired', () => {
-  it('treats AlreadyExists as bonded, not as a failure', () => {
-    expect(bluetoothSessionPaired('Failed to pair: org.bluez.Error.AlreadyExists', false)).toBe(true);
+describe('btFailureText', () => {
+  it('returns the failing line instead of the prompt tail', () => {
+    const output = [
+      'Waiting to connect to bluetoothd...\r[bluetooth]#            \b\b\bagent NoInputNoOutput',
+      'Failed to register agent object',
+      '[bluetooth]# default-agent',
+      'No agent is registered',
+      '[bluetooth]#',
+    ].join('\n');
+    expect(btFailureText(output)).toBe('Failed to register agent object');
   });
 
-  it('does not claim a pairing that failed', () => {
-    expect(bluetoothSessionPaired('Failed to pair: org.bluez.Error.AuthenticationFailed', true)).toBe(false);
-  });
-
-  it('keeps the previous bonding state when pairing never ran', () => {
-    expect(bluetoothSessionPaired('Connection successful', true)).toBe(true);
-    expect(bluetoothSessionPaired('Connection successful', false)).toBe(false);
+  it('is empty when there is nothing but prompts', () => {
+    expect(btFailureText('[bluetooth]# [bluetooth]#')).toBe('');
   });
 });
 
@@ -207,6 +200,21 @@ describe('explainBtFailure', () => {
 
   it('keeps an unknown line visible rather than inventing a reason', () => {
     expect(explainBtFailure('Some weird kernel message', 'AA:BB')).toContain('Some weird kernel message');
+  });
+
+  it('never shows a bare bluetoothctl prompt as the reason', () => {
+    const explained = explainBtFailure('[bluetooth]# [bluetooth]#', 'AA:BB');
+    expect(explained).not.toContain('[bluetooth]');
+    expect(explained).toContain('не ответило');
+  });
+
+  it('explains a device that aborts the link itself', () => {
+    const explained = explainBtFailure(
+      'Error org.bluez.Error.Failed: le-connection-abort-by-local',
+      'AA:BB:CC:11:22:33',
+    );
+    expect(explained).toContain('оборвало подключение');
+    expect(explained).toContain('сопряжения');
   });
 
   it('has no English left in the Russian strings', () => {
