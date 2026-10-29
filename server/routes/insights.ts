@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { asyncRoute, sendError, sendOk } from '../http.ts';
 import { ownerMode } from '../config.ts';
 import { repoInsights } from '../insights.ts';
-import { onlineCount, PRESENCE_WINDOW_MS, sendHeartbeat } from '../presence.ts';
+import { onlineCount, PRESENCE_SPAN_MS, sendHeartbeat } from '../presence.ts';
 import { viewerCount } from '../viewers.ts';
 
 export const insightsRouter = Router();
@@ -39,7 +39,7 @@ insightsRouter.get(
     sendOk(res, {
       online: await onlineCount(),
       viewers: viewerCount(),
-      windowSec: PRESENCE_WINDOW_MS / 1000,
+      windowSec: PRESENCE_SPAN_MS / 1000,
     });
   }),
 );

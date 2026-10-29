@@ -18,7 +18,6 @@ import { eventLog } from '../events.ts';
 import { AccError } from '../errors.ts';
 import { addFirewallRule, FIREWALL_RULE, firewallState, panelAddresses } from '../lanAccess.ts';
 import { testAiConnection } from '../ai.ts';
-import { sendHeartbeat } from '../presence.ts';
 import { AI_PROVIDER_PRESETS, type AiProviderId } from '../../shared/types.ts';
 
 export const settingsRouter = Router();
@@ -36,7 +35,6 @@ const patchSchema = z
     pollIntervalMs: z.number().int().min(2000).max(60_000).optional(),
     lanAccess: z.boolean().optional(),
     autoConnect: z.boolean().optional(),
-    presence: z.boolean().optional(),
   })
   .strict();
 
@@ -50,7 +48,6 @@ settingsRouter.patch(
     if (patch.pollIntervalMs && connectionManager.getStatus().state === 'connected') {
       connectionManager.getMetricsService().setIntervalMs(patch.pollIntervalMs);
     }
-    if (patch.presence === true) void sendHeartbeat();
     if (patch.lanAccess !== undefined && patch.lanAccess !== before.lanAccess) {
       eventLog.append({
         level: patch.lanAccess ? 'warn' : 'info',

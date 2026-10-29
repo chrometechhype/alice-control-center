@@ -199,7 +199,6 @@ export interface AppSettings {
   pollIntervalMs: number;
   lanAccess: boolean;
   autoConnect: boolean;
-  presence: boolean;
 }
 
 export type ThemeMode = 'dark' | 'light' | 'system';
@@ -209,7 +208,6 @@ export interface PublicSettings {
   pollIntervalMs: number;
   lanAccess: boolean;
   autoConnect: boolean;
-  presence: boolean;
   lanAddresses: string[];
   lanTokenSet: boolean;
 }

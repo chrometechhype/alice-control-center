@@ -329,7 +329,7 @@ watch(
         <strong>{{ formatCount(store.presence.viewers) }}</strong>
         в панели
       </span>
-      <span v-if="store.presence.online != null" class="owner-strip__item" :title="`Запущенные панели с включённой галочкой «Участвовать в статистике», за последние ${Math.round(store.presence.windowSec / 60)} минут`">
+      <span v-if="store.presence.online != null" class="owner-strip__item" :title="`Сколько копий панели работало за последние ${Math.round(store.presence.windowSec / 60)} минут. Каждая панель раз в пять минут отправляет во внешний счётчик одну анонимную отметку — без имени, адреса и модели станции.`">
         <Globe :size="15" />
         <strong>{{ formatCount(store.presence.online) }}</strong>
         {{ pluralRu(store.presence.online, ['панель', 'панели', 'панелей']) }} в сети

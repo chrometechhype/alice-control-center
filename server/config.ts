@@ -27,7 +27,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   pollIntervalMs: 5000,
   lanAccess: false,
   autoConnect: true,
-  presence: false,
 };
 
 interface PersistedConfig {
@@ -132,7 +131,6 @@ export function publicSettings(): PublicSettings {
     pollIntervalMs: config.settings.pollIntervalMs,
     lanAccess: config.settings.lanAccess,
     autoConnect: config.settings.autoConnect,
-    presence: config.settings.presence,
     lanAddresses: lanAddresses(),
     lanTokenSet: Boolean(config.lanToken),
   };

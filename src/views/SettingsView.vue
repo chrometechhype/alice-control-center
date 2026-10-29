@@ -1016,27 +1016,6 @@ onMounted(() => {
 
           <div class="setting-row">
             <div class="setting-row__text">
-              <strong>Участвовать в статистике запусков</strong>
-              <span>
-                Панель раз в пять минут отмечается во внешнем публичном счётчике — без имени, адреса
-                и модели станции. По этим отметкам автор видит, сколько панелей запущено. Выключено —
-                панель не отправляет ничего.
-              </span>
-            </div>
-            <div class="setting-row__control">
-              <button
-                type="button"
-                class="switch"
-                :class="{ on: settings?.presence }"
-                :disabled="saving || !settings"
-                aria-label="Участвовать в статистике запусков"
-                @click="saveSetting({ presence: !settings?.presence })"
-              />
-            </div>
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-row__text">
               <strong>Приветствие</strong>
               <span>Короткое знакомство с панелью, станцией и контактом автора.</span>
             </div>
