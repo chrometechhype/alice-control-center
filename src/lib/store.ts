@@ -252,7 +252,8 @@ export async function loadInsights(force = false): Promise<void> {
   try {
     store.insights = await api.get<RepoInsights>(`/insights${force ? '?force=1' : ''}`, 20_000);
   } catch {
-    store.insights = null;
+    // A rate-limited refresh keeps the previous numbers: their «обновлено» timestamp says how old
+    // they are, and a failed poll must not empty the strip.
   }
 }
 

@@ -231,17 +231,23 @@ function eventIcon(level: string) {
 
 // Кто-то открыл панель или закрыл — счётчик догоняет сам, без ручного «обновить цифры».
 let presenceTimer: number | null = null;
+// GitHub отдаёт число скачиваний с задержкой в минуты, а страница открыта часами: без опроса
+// полоса владельца замирала на цифрах, снятых при открытии.
+let insightsTimer: number | null = null;
 
 onMounted(() => {
   void refreshBackups().catch(() => undefined);
   void loadInsights();
   void loadPresence();
   presenceTimer = window.setInterval(() => void loadPresence(), 30_000);
+  insightsTimer = window.setInterval(() => void loadInsights(), 5 * 60_000);
 });
 
 onUnmounted(() => {
   if (presenceTimer != null) window.clearInterval(presenceTimer);
+  if (insightsTimer != null) window.clearInterval(insightsTimer);
   presenceTimer = null;
+  insightsTimer = null;
 });
 
 const insightsBusy = ref(false);
@@ -314,12 +320,12 @@ watch(
     </div>
 
     <section v-if="store.insights" class="owner-strip" aria-label="Статистика репозитория">
-      <span class="owner-strip__item">
+      <span class="owner-strip__item" :title="`Считаются только ZIP-архивы панели: файл контрольных сумм GitHub считает отдельным скачиванием и раньше удваивал цифру. Одно скачивание бывает и обновлением, поэтому это не число людей.`">
         <Download :size="15" />
         <strong>{{ formatCount(store.insights.totalDownloads) }}</strong>
         скачиваний
       </span>
-      <span v-if="store.insights.latest" class="owner-strip__item">
+      <span v-if="store.insights.latest" class="owner-strip__item" :title="`Сколько раз скачали архив этой версии.`">
         <Package :size="15" />
         <strong>{{ formatCount(store.insights.latest.downloads) }}</strong>
         у {{ store.insights.latest.version }}

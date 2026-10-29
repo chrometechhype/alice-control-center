@@ -1,6 +1,6 @@
 # Alice Control Center
 
-![Alice Control Center](docs/cover.png?v=1.0.0-alpha.10)
+![Alice Control Center](docs/cover.png?v=1.0.0-alpha.11)
 
 Локальная панель управления рутованной Яндекс Станцией с компьютера или телефона — для всей
 линейки станций с Алисой, от первой Лайт до Дуо Макс.
@@ -102,10 +102,10 @@ $env:ACC_INSTALL_DIR = 'D:\Apps\AliceControlCenter'
 irm https://raw.githubusercontent.com/chrometechhype/alice-control-center/main/install.ps1 | iex
 ```
 
-Нужна конкретная версия, а не последняя — например альфа `1.0.0-alpha.10`:
+Нужна конкретная версия, а не последняя — например альфа `1.0.0-alpha.11`:
 
 ```powershell
-$env:ACC_VERSION = 'v1.0.0-alpha.10'
+$env:ACC_VERSION = 'v1.0.0-alpha.11'
 irm https://raw.githubusercontent.com/chrometechhype/alice-control-center/main/install.ps1 | iex
 ```
 
@@ -145,7 +145,7 @@ backend работать, «Остановить панель и выйти» з
    - Windows: `start.bat`
    - macOS/Linux: `./start.sh`
 
-Текущая линия — `1.0.0-alpha.10`; она публикуется как обычный релиз, поэтому лежит по ссылке
+Текущая линия — `1.0.0-alpha.11`; она публикуется как обычный релиз, поэтому лежит по ссылке
 «последний релиз» и приходит через автообновление.
 
 Скрипт установит зависимости, соберёт frontend при необходимости и запустит backend на
@@ -465,10 +465,10 @@ git push --follow-tags
 ```bash
 npm run build
 npm run package
-gh release create v1.0.0-alpha.10 release/Alice-Control-Center-1.0.0-alpha.10.zip \
-  release/Alice-Control-Center-1.0.0-alpha.10.zip.sha256 \
+gh release create v1.0.0-alpha.11 release/Alice-Control-Center-1.0.0-alpha.11.zip \
+  release/Alice-Control-Center-1.0.0-alpha.11.zip.sha256 \
   --title "Alice Control Center 1.0.0 Alpha 10" \
-  --notes-file docs/release-notes/1.0.0-alpha.10.md
+  --notes-file docs/release-notes/1.0.0-alpha.11.md
 ```
 
 Список изменений — [CHANGELOG.md](CHANGELOG.md).

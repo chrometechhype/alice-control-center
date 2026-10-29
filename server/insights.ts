@@ -1,4 +1,7 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import type { RepoInsights } from '../shared/types.ts';
+import { dataDir } from './config.ts';
 import { AccError } from './errors.ts';
 import { compareVersions, UPDATE_REPO } from './update.ts';
 
@@ -9,7 +12,7 @@ interface GithubRelease {
   tag_name: string;
   draft?: boolean;
   published_at: string | null;
-  assets?: Array<{ download_count?: number | null }>;
+  assets?: Array<{ name?: string | null; download_count?: number | null }>;
 }
 
 interface GithubRepo {
@@ -20,6 +23,31 @@ interface GithubRepo {
 
 let cached: { at: number; value: RepoInsights } | null = null;
 let inFlight: Promise<RepoInsights> | null = null;
+
+const snapshotFile = path.join(dataDir, 'insights.json');
+
+/**
+ * The numbers survive a restart and a GitHub outage: an hourly quota is shared with everyone behind
+ * the same address, and a limited request used to empty the strip. What it shows then is the last
+ * snapshot, and its own «обновлено» says how old that is.
+ */
+function loadSnapshot(): { at: number; value: RepoInsights } | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(snapshotFile, 'utf8')) as { at?: unknown; value?: unknown };
+    if (typeof raw.at !== 'number' || !raw.value) return null;
+    return { at: raw.at, value: raw.value as RepoInsights };
+  } catch {
+    return null;
+  }
+}
+
+function saveSnapshot(value: RepoInsights): void {
+  try {
+    fs.writeFileSync(snapshotFile, JSON.stringify({ at: value.checkedAt, value }), { mode: 0o600 });
+  } catch {
+    // A lost snapshot costs a blank strip after the next restart, never a failed refresh.
+  }
+}
 
 function headers(): Record<string, string> {
   const headers: Record<string, string> = {
@@ -54,8 +82,14 @@ async function github<T>(url: string): Promise<T> {
   }
 }
 
-function downloadsOf(release: GithubRelease): number {
-  return (release.assets ?? []).reduce((sum, asset) => sum + (asset.download_count ?? 0), 0);
+/**
+ * Only the archive itself counts: GitHub counts the `.sha256` sidecar as a separate download, and
+ * every install fetches both, so summing all assets inflated the strip by roughly half.
+ */
+export function archiveDownloads(release: GithubRelease): number {
+  return (release.assets ?? [])
+    .filter((asset) => (asset.name ?? '').toLowerCase().endsWith('.zip'))
+    .reduce((sum, asset) => sum + (asset.download_count ?? 0), 0);
 }
 
 function versionOf(tag: string): string {
@@ -80,7 +114,7 @@ async function collect(): Promise<RepoInsights> {
       .filter((release) => !release.draft)
       .map((release) => ({
         version: versionOf(release.tag_name),
-        downloads: downloadsOf(release),
+        downloads: archiveDownloads(release),
         publishedAt: release.published_at,
       })),
   );
@@ -97,13 +131,20 @@ async function collect(): Promise<RepoInsights> {
 }
 
 export async function repoInsights(force = false): Promise<RepoInsights> {
+  if (!cached) cached = loadSnapshot();
   if (!force && cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.value;
   if (inFlight) return inFlight;
   inFlight = (async () => {
     try {
       const value = await collect();
       cached = { at: Date.now(), value };
+      saveSnapshot(value);
       return value;
+    } catch (error) {
+      // Running out of the hourly GitHub quota must not blank the strip: the numbers already read
+      // keep their own `checkedAt`, which says exactly how old they are.
+      if (cached) return cached.value;
+      throw error;
     } finally {
       inFlight = null;
     }
