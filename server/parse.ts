@@ -371,6 +371,27 @@ export function bluetoothPairedFilterWorks(batch: BtBatch): boolean {
 }
 
 /**
+ * `connect` prints «Connection successful» before the link is really up, so the interactive session
+ * ends with `info` and its «Connected: yes/no» is the answer the panel reports. Without an info
+ * block the successful line is the only evidence there is.
+ */
+export function bluetoothSessionConnected(stdout: string): boolean {
+  const plain = stdout.replace(/\x1b\[[0-9;]*m/g, '');
+  if (/Connected:\s*yes/i.test(plain)) return true;
+  if (/Connected:\s*no/i.test(plain)) return false;
+  return /Connection successful/i.test(plain);
+}
+
+/** Pairing is «already done» when BlueZ says so — a second `pair` on a bonded device is not a failure. */
+export function bluetoothSessionPaired(stdout: string, fallback: boolean): boolean {
+  const plain = stdout.replace(/\x1b\[[0-9;]*m/g, '');
+  if (/Pairing successful/i.test(plain)) return true;
+  if (/AlreadyExists|already paired/i.test(plain)) return true;
+  if (/Failed to pair/i.test(plain)) return false;
+  return fallback;
+}
+
+/**
  * `bluetoothctl` answers in English, and BlueZ errors are useless without context: «Device XX not
  * available» means BlueZ has no live object for that address, which almost always means the earbuds
  * sleep in the case, are out of range or are held by the phone. The raw text goes to the journal;
@@ -458,7 +479,8 @@ export function guessModel(modelRaw: string, hostname: string): string {
     [/pickle/, 'Станция Мини 3 Про'],
     [/bergamot|mini ?3/, 'Станция Мини 3'],
     [/prune|lite-gen2|lite gen2/, 'Станция Лайт 2'],
-    [/mini ?2/, 'Станция Мини 2'],
+    [/mini[\s_-]*2[\s\S]*clock|мини[\s_-]*2[\s\S]*час/, 'Станция Мини 2 с часами'],
+    [/mini[\s_-]*2|мини[\s_-]*2/, 'Станция Мини 2'],
     [/plum/, 'Станция Лайт 2'],
     [/micro/, 'Станция Лайт'],
     [/cucumber|station midi|station-midi/, 'Станция Миди'],

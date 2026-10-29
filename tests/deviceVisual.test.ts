@@ -60,6 +60,23 @@ describe('detectDeviceVisual', () => {
     expect(detectDeviceVisual(device('a', 'Станция Мини 3')).kind).toBe('mini');
   });
 
+  it('no longer shows a Mini 2 as the first Mini', () => {
+    const clock = detectDeviceVisual(device('a', 'Станция Мини 2 с часами'));
+    expect(clock.kind).toBe('mini2-clock');
+    expect(clock.label).toBe('Станция Мини 2 с часами');
+    expect(clock.image).toBe('/devices/mini-clock.webp');
+
+    const plain = detectDeviceVisual(device('a', 'Станция Мини 2'));
+    expect(plain.kind).toBe('mini2');
+    expect(plain.label).toBe('Станция Мини 2');
+    expect(plain.tagline).not.toContain('первая');
+  });
+
+  it('reads the Mini 2 look from the raw model string too', () => {
+    expect(detectDeviceVisual(device('yandex-station', 'Yandex Mini 2 with clock')).kind).toBe('mini2-clock');
+    expect(detectDeviceVisual(device('yandex-station', 'yandex_station_mini_2')).kind).toBe('mini2');
+  });
+
   it('checks Station 3 before Station 2 and Duo Max before both', () => {
     expect(detectDeviceVisual(device('a', 'Станция 3')).kind).toBe('station3');
     expect(detectDeviceVisual(device('a', 'Станция 2')).kind).toBe('station2');

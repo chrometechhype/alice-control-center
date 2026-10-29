@@ -15,7 +15,7 @@ const EFFECT_NAMES = SCENE_EFFECTS.join(', ');
 
 const sayStep = z.object({
   kind: z.literal('say'),
-  text: z.string().trim().min(1, 'Текст озвучки не может быть пустым').max(300, 'Фраза длиннее 300 символов'),
+  text: z.string().trim().min(1, 'Текст озвучки не может быть пустым').max(2000, 'Фраза длиннее 2000 символов'),
 });
 const soundStep = z.object({
   kind: z.literal('sound'),
@@ -51,14 +51,21 @@ const notifyStep = z.object({
 });
 const diagnosticStep = z.object({ kind: z.literal('diagnostic') });
 
+const parallelWith = z
+  .number({ error: 'Номер шага для одновременного запуска — число' })
+  .int('Номер шага для одновременного запуска — целое число')
+  .min(1, 'Номер шага начинается с 1')
+  .max(32, 'В сценарии не больше 32 шагов')
+  .optional();
+
 /** Everything the editor and the API accept. */
 export const stepSchema = z.discriminatedUnion('kind', [
-  sayStep,
-  soundStep,
-  ledStep,
-  pauseStep,
-  notifyStep,
-  diagnosticStep,
+  sayStep.extend({ parallelWith }),
+  soundStep.extend({ parallelWith }),
+  ledStep.extend({ parallelWith }),
+  pauseStep.extend({ parallelWith }),
+  notifyStep.extend({ parallelWith }),
+  diagnosticStep.extend({ parallelWith }),
 ], { error: 'Шаг должен быть одного типа: say, sound, led, pause, notify или diagnostic' });
 
 /** What the model may produce: it cannot know which sound files live on the station. */

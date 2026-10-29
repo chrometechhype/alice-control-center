@@ -13,6 +13,11 @@ body {
   background-attachment: fixed;
 }
 
+/* A dark panel is graphite, full stop: no coloured wash behind the cards. */
+[data-theme='dark'] body {
+  background: var(--bg);
+}
+
 ::selection {
   background: var(--primary-soft);
   color: var(--on-primary-soft);
@@ -42,20 +47,24 @@ html[data-station-accent] {
 }
 
 html[data-theme='dark'][data-station-accent] {
+  /* Only the accent itself changes: surfaces stay the same graphite, otherwise a violet body
+     tinted every card and the whole sidebar. These tokens are repeated on purpose — the generic
+     `html[data-station-accent]` block above has the same specificity as `[data-theme='dark']` and,
+     being the later winner on <html>, would otherwise keep the light accent-mixed surfaces. */
+  --bg: #0b0c0e;
+  --bg-soft: #0f1013;
+  --surface: #131417;
+  --surface-2: #181a1e;
+  --surface-3: #202227;
+  --surface-4: #2a2c32;
+  --line: #24262c;
+  --line-strong: #33363d;
+
   --primary: color-mix(in srgb, var(--station-accent) 62%, #ffffff);
   --primary-strong: color-mix(in srgb, var(--station-accent) 42%, #ffffff);
-  --primary-soft: color-mix(in srgb, var(--station-accent) 30%, #171210);
+  --primary-soft: color-mix(in srgb, var(--station-accent) 30%, #0b0c0e);
   --primary-ink: #0b2016;
   --on-primary-soft: color-mix(in srgb, var(--station-accent) 58%, #ffffff);
-
-  --bg: color-mix(in srgb, var(--station-accent) 6%, #171210);
-  --bg-soft: color-mix(in srgb, var(--station-accent) 8%, #1d1714);
-  --surface: color-mix(in srgb, var(--station-accent) 7%, #221b17);
-  --surface-2: color-mix(in srgb, var(--station-accent) 10%, #2c221e);
-  --surface-3: color-mix(in srgb, var(--station-accent) 13%, #382b25);
-  --surface-4: color-mix(in srgb, var(--station-accent) 16%, #45342d);
-  --line: color-mix(in srgb, var(--station-accent) 16%, #3b2d27);
-  --line-strong: color-mix(in srgb, var(--station-accent) 22%, #4e3c34);
 }
 
 /* ---------- Motion ---------- */
@@ -552,10 +561,12 @@ body,
 }
 
 [data-theme='dark'] .hero {
-  border-color: color-mix(in srgb, var(--primary) 22%, var(--line));
-  background:
-    radial-gradient(560px 340px at 86% 6%, color-mix(in srgb, var(--primary-soft) 70%, transparent), transparent 70%),
-    linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
+  border-color: color-mix(in srgb, var(--primary) 18%, var(--line));
+  background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
+}
+
+[data-theme='dark'] .hero::before {
+  opacity: 0.035;
 }
 
 .hero::after {

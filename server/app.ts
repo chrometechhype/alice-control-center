@@ -21,6 +21,7 @@ import { filesRouter } from './routes/files.ts';
 import { terminalRouter } from './routes/terminal.ts';
 import { ledRouter } from './routes/led.ts';
 import { bluetoothRouter } from './routes/bluetooth.ts';
+import { wifiRouter } from './routes/wifi.ts';
 import { audioRouter } from './routes/audio.ts';
 import { pluginsRouter } from './routes/plugins.ts';
 import { automationRouter } from './routes/automation.ts';
@@ -97,6 +98,7 @@ export function createApp(): AppBundle {
   app.use('/api/terminal', terminalRouter);
   app.use('/api/led', ledRouter);
   app.use('/api/bluetooth', bluetoothRouter);
+  app.use('/api/wifi', wifiRouter);
   app.use('/api/audio', audioRouter);
   app.use('/api/plugins', pluginsRouter);
   app.use('/api/automation', automationRouter);

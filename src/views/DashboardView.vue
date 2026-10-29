@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import {
   Activity,
@@ -8,11 +8,15 @@ import {
   AudioLines,
   Check,
   ChevronRight,
+  Copy,
   Cpu,
+  Eye,
+  EyeOff,
   FolderOpen,
   HardDrive,
   Info,
   Lightbulb,
+  Lock,
   MemoryStick,
   RefreshCw,
   ShieldCheck,
@@ -20,10 +24,12 @@ import {
   SquareTerminal,
   Thermometer,
   Volume2,
+  Wifi,
   Workflow,
   X,
   Zap,
 } from '@lucide/vue';
+import type { WifiStatus } from '@shared/types';
 import Sparkline from '@/components/Sparkline.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
@@ -156,10 +162,39 @@ async function createConfigBackup(): Promise<void> {
 
 const probeBusy = ref(false);
 
+const wifi = ref<WifiStatus | null>(null);
+const wifiRevealed = ref(false);
+const wifiBusy = ref(false);
+const wifiPsk = computed(() => wifi.value?.connected?.psk ?? null);
+
+async function loadWifi(): Promise<void> {
+  if (!isConnected.value) return;
+  wifiBusy.value = true;
+  try {
+    wifi.value = await api.get<WifiStatus>('/wifi/status', 25_000);
+  } catch {
+    // Wi-Fi — дополнение к обзору: если станция не отдала wpa_cli, карточка честно скажет «нет данных».
+    wifi.value = null;
+  } finally {
+    wifiBusy.value = false;
+  }
+}
+
+async function copyWifiPassword(): Promise<void> {
+  if (!wifiPsk.value) return;
+  try {
+    await navigator.clipboard.writeText(wifiPsk.value);
+    pushToast('ok', 'Пароль Wi-Fi скопирован');
+  } catch {
+    pushToast('error', 'Браузер не дал доступ к буферу — раскройте пароль и скопируйте вручную');
+  }
+}
+
 async function refresh(): Promise<void> {
   probeBusy.value = true;
   try {
     await refreshProbe();
+    void loadWifi();
     pushToast('ok', 'Данные обновлены');
   } catch (error) {
     pushToast('error', errorMessage(error));
@@ -191,6 +226,15 @@ function eventIcon(level: string) {
 onMounted(() => {
   void refreshBackups().catch(() => undefined);
 });
+
+watch(
+  isConnected,
+  (connectedNow) => {
+    if (connectedNow) void loadWifi();
+    else wifi.value = null;
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -295,6 +339,65 @@ onMounted(() => {
           </div>
           <div class="volume-card__control">
             <VolumeControl />
+          </div>
+        </article>
+
+        <article class="card ov-12 wifi-card">
+          <div class="wifi-card__net">
+            <div class="stat-top">
+              <span class="stat-label">Сеть Wi-Fi</span>
+              <span class="pill" :class="wifi?.connected ? 'pill--ok' : 'pill--muted'">
+                {{ wifi?.connected ? 'подключено' : wifiBusy ? 'читаем…' : 'нет данных' }}
+              </span>
+            </div>
+            <div class="wifi-card__ssid">
+              <Wifi :size="18" class="muted" />
+              <strong>{{ wifi?.connected?.ssid ?? '—' }}</strong>
+            </div>
+            <div class="stat-foot">
+              <span class="mono">{{ wifi?.connected?.ip ?? info?.ip ?? 'IP неизвестен' }}</span>
+              <span v-if="wifi?.connected?.keyMgmt" class="pill pill--muted">{{ wifi.connected.keyMgmt }}</span>
+              <span v-if="wifi?.connected?.freq" class="mono">{{ wifi.connected.freq }} МГц</span>
+            </div>
+          </div>
+
+          <div class="wifi-card__psk">
+            <div class="stat-top">
+              <span class="stat-label">Пароль</span>
+              <Lock :size="13" class="muted" />
+            </div>
+            <div class="wifi-card__value mono">
+              {{ wifiPsk ? (wifiRevealed ? wifiPsk : '••••••••') : '—' }}
+            </div>
+            <div class="stat-foot">
+              <span class="truncate" style="max-width: 220px">
+                {{ wifi?.configPath ?? '/bkupgrade/data/wpa_supplicant.conf' }}
+              </span>
+              <span v-if="wifiPsk" class="row" style="gap: 2px">
+                <button
+                  type="button"
+                  class="btn btn--ghost btn--icon btn--sm"
+                  :title="wifiRevealed ? 'Скрыть пароль' : 'Показать пароль'"
+                  @click="wifiRevealed = !wifiRevealed"
+                >
+                  <EyeOff v-if="wifiRevealed" :size="14" />
+                  <Eye v-else :size="14" />
+                </button>
+                <button type="button" class="btn btn--ghost btn--icon btn--sm" title="Скопировать пароль" @click="copyWifiPassword">
+                  <Copy :size="14" />
+                </button>
+              </span>
+            </div>
+          </div>
+
+          <div class="wifi-card__actions">
+            <RouterLink to="/wifi" class="btn btn--soft btn--sm">
+              <Wifi :size="14" />
+              Управление Wi-Fi
+            </RouterLink>
+            <button class="btn btn--ghost btn--icon btn--sm" :disabled="wifiBusy" title="Перечитать Wi-Fi" @click="loadWifi">
+              <RefreshCw :size="14" :class="{ spin: wifiBusy }" />
+            </button>
           </div>
         </article>
 
@@ -572,6 +675,41 @@ onMounted(() => {
   gap: 14px;
 }
 
+.wifi-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 28px;
+}
+
+.wifi-card__ssid {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 4px 0 6px;
+  font-size: 19px;
+}
+
+.wifi-card__ssid strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.wifi-card__value {
+  margin: 4px 0 6px;
+  font-size: 17px;
+  letter-spacing: 0.04em;
+}
+
+.wifi-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .quick-card {
   padding: 6px 8px;
 }
@@ -654,6 +792,11 @@ onMounted(() => {
     grid-template-columns: minmax(0, 1fr);
     align-items: start;
     gap: 12px;
+  }
+
+  .wifi-card {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
   }
 }
 

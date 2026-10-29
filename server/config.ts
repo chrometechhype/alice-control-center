@@ -165,8 +165,6 @@ export function publicAiSettings(): PublicAiSettings {
     model,
     hasKey,
     configured,
-    ttsModel: ai.ttsModel?.trim() || preset?.ttsModel || '',
-    ttsVoice: ai.ttsVoice?.trim() || preset?.ttsVoice || '',
     presets: AI_PROVIDER_PRESETS,
   };
 }

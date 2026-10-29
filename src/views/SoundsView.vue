@@ -44,7 +44,7 @@ const speaking = ref(false);
 const speechError = ref('');
 
 const canPlayOnStation = computed(() => (players.value?.length ?? 0) > 0);
-const speechLimit = 300;
+const speechLimit = 2000;
 
 const replaceTarget = ref<SoundFile | null>(null);
 const replaceFile = ref<File | null>(null);
@@ -77,9 +77,16 @@ interface StationPlayResult {
   seconds: number;
   converted: boolean;
   finished: boolean;
-  /** Which voice spoke — the configured AI server or the operating system. */
-  voice?: string;
-  engine?: 'ai' | 'local';
+}
+
+/** Alice speaks through the station's own TTS capability — no player and no file are involved. */
+interface AliceSpeechResult {
+  engine: 'alice';
+  voice: string;
+  started: boolean;
+  completed: boolean;
+  durationMs: number;
+  transport: string;
 }
 
 const libraryFiles = computed(() => (listing.value?.files ?? []).filter((file) => file.origin === 'user'));
@@ -273,17 +280,13 @@ async function sayOnStation(): Promise<void> {
   speaking.value = true;
   speechError.value = '';
   try {
-    const result = await api.post<StationPlayResult>('/audio/say', { text }, 200_000);
+    const result = await api.post<AliceSpeechResult>('/audio/say', { text }, 200_000);
     speechText.value = '';
-    const from =
-      result.engine === 'local'
-        ? `голосом компьютера «${result.voice ?? 'Windows'}» — это не голос Алисы`
-        : `голосом ИИ «${result.voice ?? ''}»`;
     pushToast(
       'ok',
-      `Колонка говорит ${from} через ${result.player}`
-        + (result.converted ? ' (перекодировано в WAV 48 кГц)' : '')
-        + '. Файл удалён со станции сразу после воспроизведения.',
+      result.completed
+        ? `Колонка сказала фразу голосом Алисы${result.voice ? ` (${result.voice})` : ''}. На станции ничего не сохранено.`
+        : 'Алиса заговорила, но подтверждение конца фразы не пришло — проверьте, что колонка договорила.',
     );
   } catch (caught) {
     speechError.value = errorMessage(caught);
@@ -609,9 +612,9 @@ onMounted(() => {
 
           <article class="card card--soft">
             <div class="card-head">
-              <div class="card-title"><Mic :size="15" /> Озвучка</div>
-              <span class="pill" :class="canPlayOnStation ? 'pill--ok' : 'pill--muted'">
-                {{ players === null ? 'проверяем' : canPlayOnStation ? players.join(' · ') : 'нет плеера' }}
+              <div class="card-title"><Mic :size="15" /> Озвучка голосом Алисы</div>
+              <span class="pill" :class="isConnected ? 'pill--ok' : 'pill--muted'">
+                {{ isConnected ? 'голос станции' : 'нужно подключение' }}
               </span>
             </div>
             <div class="field mt-12">
@@ -622,32 +625,33 @@ onMounted(() => {
                 class="textarea"
                 rows="3"
                 :maxlength="speechLimit"
-                :disabled="speaking || !canPlayOnStation"
+                :disabled="speaking || !isConnected"
                 placeholder="Например: загрузка завершена"
               />
               <span class="field-hint">
-                {{ speechText.trim().length }}/{{ speechLimit }} · Голос Алисы недоступен — он синтезируется
-                на сервере Яндекса. Панель говорит через ИИ-провайдера, а если у него нет
-                <span class="mono">/audio/speech</span> — голосом Windows.
+                {{ speechText.trim().length }}/{{ speechLimit }} · Станция произносит текст своим штатным
+                голосом Алисы: фраза уходит в её локальный речевой сервис, синтезируется в облаке
+                Яндекса и играет через её собственный плеер. Файлы не создаются, ИИ-провайдер не
+                используется.
               </span>
             </div>
             <div v-if="speechError" class="alert alert--error">
               <AlertTriangle :size="15" />
               <div>{{ speechError }}</div>
             </div>
-            <div v-else-if="players && !players.length" class="alert alert--warn">
+            <div v-else-if="!isConnected" class="alert alert--warn">
               <AlertTriangle :size="15" />
-              <div>На станции нет ни одного из плееров (aplay, paplay, ffplay, mpv, gstreamer), поэтому озвучка недоступна.</div>
+              <div>Чтобы Алиса говорила, панель должна быть подключена к станции по SSH.</div>
             </div>
             <button
               type="button"
               class="btn btn--primary mt-12 w-full"
-              :disabled="speaking || !speechText.trim() || !canPlayOnStation"
+              :disabled="speaking || !speechText.trim() || !isConnected"
               @click="sayOnStation"
             >
               <LoaderCircle v-if="speaking" :size="15" class="spin" />
               <Mic v-else :size="15" />
-              {{ speaking ? 'Озвучиваем…' : 'Сказать на колонке' }}
+              {{ speaking ? 'Алиса говорит…' : 'Сказать голосом Алисы' }}
             </button>
           </article>
 

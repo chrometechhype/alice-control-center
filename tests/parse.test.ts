@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   bluetoothPairedFilterWorks,
+  bluetoothSessionConnected,
+  bluetoothSessionPaired,
   computeCpuPct,
   dirTreeCommand,
   dirWalkCommand,
@@ -138,6 +140,42 @@ describe('parseBtBatch', () => {
   });
 });
 
+describe('bluetoothSessionConnected', () => {
+  it('trusts `info` over the premature «Connection successful» line', () => {
+    const output = [
+      'Attempting to connect to AA:BB:CC:11:22:33',
+      'Connection successful',
+      'Device AA:BB:CC:11:22:33 (public)',
+      'Connected: no',
+    ].join('\n');
+    expect(bluetoothSessionConnected(output)).toBe(false);
+  });
+
+  it('reads «Connected: yes» even with the coloured prompt in the way', () => {
+    expect(bluetoothSessionConnected('\x1b[0;94m[bluetooth]\x1b[0m# \tConnected: yes')).toBe(true);
+  });
+
+  it('falls back to the successful line when there is no info block', () => {
+    expect(bluetoothSessionConnected('[CHG] Device AA:BB:CC:11:22:33 Connected: yes')).toBe(true);
+    expect(bluetoothSessionConnected('Failed to connect: org.bluez.Error.Failed')).toBe(false);
+  });
+});
+
+describe('bluetoothSessionPaired', () => {
+  it('treats AlreadyExists as bonded, not as a failure', () => {
+    expect(bluetoothSessionPaired('Failed to pair: org.bluez.Error.AlreadyExists', false)).toBe(true);
+  });
+
+  it('does not claim a pairing that failed', () => {
+    expect(bluetoothSessionPaired('Failed to pair: org.bluez.Error.AuthenticationFailed', true)).toBe(false);
+  });
+
+  it('keeps the previous bonding state when pairing never ran', () => {
+    expect(bluetoothSessionPaired('Connection successful', true)).toBe(true);
+    expect(bluetoothSessionPaired('Connection successful', false)).toBe(false);
+  });
+});
+
 describe('explainBtFailure', () => {
   it('turns the BlueZ «not available» line into a next action', () => {
     const explained = explainBtFailure(
@@ -179,6 +217,12 @@ describe('guessModel', () => {
 
   it('prefers Mini 3 Pro over Mini 3', () => {
     expect(guessModel('Yandex Pickle', 'yandex-station')).toBe('Станция Мини 3 Про');
+  });
+
+  it('tells a Mini 2 with a clock from a plain Mini 2', () => {
+    expect(guessModel('Yandex Mini 2 with clock', 'yandex-station')).toBe('Станция Мини 2 с часами');
+    expect(guessModel('yandex_station_mini2_clock', 'yandex-station')).toBe('Станция Мини 2 с часами');
+    expect(guessModel('yandex_station_mini_2', 'yandex-station')).toBe('Станция Мини 2');
   });
 
   it('falls back to the raw model', () => {

@@ -6,8 +6,9 @@ import { AccError } from '../errors.ts';
 import { eventLog } from '../events.ts';
 import { asyncRoute, sendOk } from '../http.ts';
 import { parseAmixerMaster } from '../parse.ts';
+import { speakWithAlice } from '../aliceVoice.ts';
 import { assertPlayableSoundPath } from '../security/paths.ts';
-import { findPlayers, playDeviceFile, playTempAudio, synthesizeSpeech } from '../voice.ts';
+import { findPlayers, playDeviceFile } from '../voice.ts';
 import { percentToLevel, percentToRaw, rawToPercent } from '../volumeScale.ts';
 import { clamp } from '../util.ts';
 
@@ -142,45 +143,30 @@ audioRouter.post(
 );
 
 /**
- * Speaks a line through the configured AI server. The clip goes to /tmp, plays, and the same
- * remote command deletes it — the station keeps nothing.
+ * Speaks a line with Alice's own voice. The phrase goes to the station's local speech capability
+ * (`AliceCapability` / START_VOCALIZE), which synthesises it in Yandex's cloud and plays it through
+ * the same TTS player Alice uses herself — no file, no third-party voice, nothing left behind.
  */
 audioRouter.post(
   '/say',
   asyncRoute(async (req, res) => {
     const parsed = z
-      .object({ text: z.string().trim().min(1).max(300) })
+      .object({ text: z.string().trim().min(1).max(2000) })
       .strict()
       .safeParse(req.body);
     if (!parsed.success) {
-      throw new AccError('BAD_REQUEST', 'Текст для озвучки должен быть от 1 до 300 символов', 400);
+      throw new AccError('BAD_REQUEST', 'Текст для озвучки должен быть от 1 до 2000 символов', 400);
     }
-    // Check the station before spending a TTS request on it.
     const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
-    const players = await findPlayers(adapter);
-    if (!players.length) {
-      throw new AccError(
-        'NO_AUDIO_PLAYER',
-        'На станции не нашлось плеера (aplay, paplay, ffplay, mpv, gstreamer) — озвучка невозможна.',
-        502,
-      );
-    }
-    const speech = await synthesizeSpeech(parsed.data.text);
-    const played = await playTempAudio(adapter, speech.audio, speech.ext);
+    const speech = await speakWithAlice(adapter, parsed.data.text);
     eventLog.append({
       level: 'info',
       module: 'audio',
       operation: 'say',
       result: 'ok',
-      message: `Озвучено (${speech.engine === 'local' ? 'системный голос' : 'ИИ'}): ${parsed.data.text.slice(0, 60)}`,
-      details: { ...played, engine: speech.engine, model: speech.model, voice: speech.voice, bytes: speech.audio.length },
+      message: `Алиса сказала: ${parsed.data.text.slice(0, 60)}`,
+      details: { engine: speech.engine, transport: speech.transport, durationMs: speech.durationMs },
     });
-    sendOk(res, {
-      ...played,
-      engine: speech.engine,
-      model: speech.model,
-      voice: speech.voice,
-      bytes: speech.audio.length,
-    });
+    sendOk(res, speech);
   }),
 );

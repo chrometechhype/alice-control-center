@@ -13,7 +13,6 @@ import {
   KeyRound,
   LoaderCircle,
   LogOut,
-  Mic,
   Monitor,
   Moon,
   Palette,
@@ -148,11 +147,8 @@ const aiError = ref('');
 const aiProvider = ref<AiProviderId>('custom');
 const aiBaseUrl = ref('');
 const aiModel = ref('');
-const aiTtsModel = ref('');
-const aiTtsVoice = ref('');
 const aiApiKey = ref('');
 const aiTestReply = ref('');
-const speaking = ref(false);
 const aiPreset = computed(() => ai.value?.presets.find((item) => item.id === aiProvider.value) ?? null);
 const aiKeyRequired = computed(() => Boolean(aiPreset.value?.requiresKey) && !ai.value?.hasKey);
 
@@ -205,8 +201,6 @@ async function loadAiSettings(): Promise<void> {
     aiProvider.value = result.provider;
     aiBaseUrl.value = result.baseUrl;
     aiModel.value = result.model;
-    aiTtsModel.value = result.ttsModel;
-    aiTtsVoice.value = result.ttsVoice;
   } catch (caught) {
     aiError.value = errorMessage(caught);
   } finally {
@@ -220,8 +214,6 @@ function chooseAiProvider(id: AiProviderId): void {
   if (preset) {
     aiBaseUrl.value = preset.baseUrl;
     aiModel.value = preset.model;
-    if (preset.ttsModel) aiTtsModel.value = preset.ttsModel;
-    if (preset.ttsVoice) aiTtsVoice.value = preset.ttsVoice;
   }
   aiApiKey.value = '';
   aiTestReply.value = '';
@@ -238,16 +230,12 @@ async function saveAi(): Promise<void> {
       baseUrl: aiBaseUrl.value.trim(),
       model: aiModel.value.trim(),
       ...(aiApiKey.value.trim() ? { apiKey: aiApiKey.value.trim() } : {}),
-      ...(aiTtsModel.value.trim() ? { ttsModel: aiTtsModel.value.trim() } : {}),
-      ...(aiTtsVoice.value.trim() ? { ttsVoice: aiTtsVoice.value.trim() } : {}),
     };
     const result = await api.put<PublicAiSettings>('/settings/ai', body);
     ai.value = result;
     aiProvider.value = result.provider;
     aiBaseUrl.value = result.baseUrl;
     aiModel.value = result.model;
-    aiTtsModel.value = result.ttsModel;
-    aiTtsVoice.value = result.ttsVoice;
     aiApiKey.value = '';
     aiTestReply.value = '';
     pushToast('ok', 'Настройки ИИ сохранены');
@@ -277,21 +265,6 @@ async function testAi(): Promise<void> {
     pushToast('error', aiError.value);
   } finally {
     aiTesting.value = false;
-  }
-}
-
-async function testSpeech(): Promise<void> {
-  if (speaking.value) return;
-  speaking.value = true;
-  aiError.value = '';
-  try {
-    const result = await api.post<{ player: string }>('/audio/say', { text: 'Проверка озвучки. Панель на связи.' }, 60_000);
-    pushToast('ok', `Колонка играет через ${result.player}`);
-  } catch (caught) {
-    aiError.value = errorMessage(caught);
-    pushToast('error', aiError.value);
-  } finally {
-    speaking.value = false;
   }
 }
 
@@ -747,7 +720,7 @@ onMounted(() => {
           <div class="card-head">
             <div>
               <div class="card-title"><Wand2 :size="15" /> ИИ-генератор</div>
-              <div class="card-sub">Fun Lab и озвучка текста используют выбранный OpenAI-совместимый сервер</div>
+              <div class="card-sub">Fun Lab и сценарии используют выбранный OpenAI-совместимый сервер</div>
             </div>
             <span class="pill" :class="ai?.configured ? 'pill--ok' : 'pill--muted'">
               {{ ai?.configured ? 'готов' : 'не настроен' }}
@@ -793,31 +766,6 @@ onMounted(() => {
               />
             </label>
 
-            <div class="row-wrap" style="gap: 12px">
-              <label class="field" style="flex: 1; min-width: 180px">
-                <span class="field-label">Модель озвучки</span>
-                <input
-                  v-model="aiTtsModel"
-                  class="input"
-                  type="text"
-                  spellcheck="false"
-                  placeholder="tts-1"
-                  :disabled="aiSaving"
-                />
-              </label>
-              <label class="field" style="flex: 1; min-width: 180px">
-                <span class="field-label">Голос</span>
-                <input
-                  v-model="aiTtsVoice"
-                  class="input"
-                  type="text"
-                  spellcheck="false"
-                  placeholder="alloy"
-                  :disabled="aiSaving"
-                />
-              </label>
-            </div>
-
             <label class="field">
               <span class="field-label">API-ключ</span>
               <input
@@ -840,9 +788,8 @@ onMounted(() => {
             <p class="field-hint">
               Ключ хранится только в <span class="mono">data/config.json</span> на backend и никогда
               не отдаётся во frontend. Подходит любой сервер с endpoint
-              <span class="mono">/chat/completions</span>. Озвучка использует
-              <span class="mono">/audio/speech</span>; если его нет, панель говорит голосом Windows —
-              чужой текст голосом Алисы произнести нельзя, он синтезируется в облаке Яндекса.
+              <span class="mono">/chat/completions</span>. Озвучка текста идёт голосом самой Алисы
+              через станцию и этот сервер не использует.
             </p>
 
             <div v-if="aiError" class="alert alert--error">
@@ -878,17 +825,6 @@ onMounted(() => {
                 <LoaderCircle v-if="aiTesting" :size="15" class="spin" />
                 <Wand2 v-else :size="15" />
                 {{ aiTesting ? 'Проверяем…' : 'Проверить' }}
-              </button>
-              <button
-                type="button"
-                class="btn btn--soft"
-                :disabled="speaking || !ai?.configured || !isConnected"
-                :title="isConnected ? 'Колонка произнесёт пробу и тут же удалит файл' : 'Нужно подключение к станции'"
-                @click="testSpeech"
-              >
-                <LoaderCircle v-if="speaking" :size="15" class="spin" />
-                <Mic v-else :size="15" />
-                {{ speaking ? 'Озвучиваем…' : 'Проверить озвучку' }}
               </button>
               <button
                 v-if="ai?.hasKey"

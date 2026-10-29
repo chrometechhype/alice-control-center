@@ -29,6 +29,12 @@ export const router = createRouter({
       meta: { title: 'LED Studio', subtitle: 'Цвета и анимации реальных LED-зон' },
     },
     {
+      path: '/wifi',
+      name: 'wifi',
+      component: () => import('./views/WifiView.vue'),
+      meta: { title: 'Wi-Fi', subtitle: 'Сети, пароли и переключение через wpa_cli без перезагрузки' },
+    },
+    {
       path: '/bluetooth',
       name: 'bluetooth',
       component: () => import('./views/BluetoothView.vue'),

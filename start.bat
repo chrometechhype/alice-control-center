@@ -9,6 +9,14 @@ if errorlevel 1 (
   exit /b 1
 )
 
+if /i "%~1"=="--full-debug" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\acc-full-debug.ps1"
+  set "ACC_DEBUG_CODE=%errorlevel%"
+  echo.
+  pause
+  exit /b %ACC_DEBUG_CODE%
+)
+
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\acc-start.ps1"
 if errorlevel 1 (
   echo.

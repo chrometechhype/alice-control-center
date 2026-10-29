@@ -6,6 +6,8 @@ export type StationKind =
   | 'lite'
   | 'mini'
   | 'mini-pro'
+  | 'mini2'
+  | 'mini2-clock'
   | 'mini-clock'
   | 'mini-old'
   | 'max'
@@ -110,6 +112,24 @@ const VISUALS: Record<StationKind, Omit<DeviceVisual, 'kind'>> = {
     accentSoft: '#dbe7ff',
     image: '/devices/mini-pro.webp',
   },
+  'mini2': {
+    label: 'Станция Мини 2',
+    family: 'Мини',
+    tagline: 'компактная колонка с Алисой',
+    accent: '#8d97a3',
+    accentSoft: '#e4e8ec',
+    // Прошивка не сообщает, есть ли на корпусе часы, и отдельного рендера Мини 2 без часов нет —
+    // честнее показать знак Алисы, чем чужую колонку.
+    image: null,
+  },
+  'mini2-clock': {
+    label: 'Станция Мини 2 с часами',
+    family: 'Мини',
+    tagline: 'колонка с LED-дисплеем и часами',
+    accent: '#7d8794',
+    accentSoft: '#e2e6ea',
+    image: '/devices/mini-clock.webp',
+  },
   'mini-clock': {
     label: 'Станция Мини с часами',
     family: 'Мини',
@@ -192,7 +212,10 @@ export function detectDeviceVisual(info: DeviceInfo | null | undefined): DeviceV
   else if (/станция\s*3|station\s*3|station-gen3|station3/.test(haystack)) kind = 'station3';
   else if (/станция\s*2|station\s*2|station-gen2|station2|stereo/.test(haystack)) kind = 'station2';
   else if (/мини\s*3\s*про|mini\s*3\s*pro|mini-gen3-pro|mini-pro/.test(haystack)) kind = 'mini-pro';
+  // «Мини 2 с часами» must win over both the generic clock rule and the plain Mini 2 rule.
+  else if (/мини[\s\S]*2[\s\S]*час|mini[\s\S]*2[\s\S]*clock/.test(haystack)) kind = 'mini2-clock';
   else if (/мини[\s\S]*час|mini[\s\S]*clock/.test(haystack)) kind = 'mini-clock';
+  else if (/мини[\s_-]*2|mini[\s_-]*2|mini2/.test(haystack)) kind = 'mini2';
   else if (/мини\s*3|mini\s*3|mini-gen3/.test(haystack)) kind = 'mini';
   else if (/миди|midi/.test(haystack)) kind = 'midi';
   else if (/стрит|street/.test(haystack)) kind = 'street';

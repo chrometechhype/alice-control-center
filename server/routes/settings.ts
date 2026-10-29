@@ -167,8 +167,6 @@ const aiSchema = z
     baseUrl: z.string().trim().max(500).optional(),
     model: z.string().trim().max(200).optional(),
     apiKey: z.string().trim().max(600).optional(),
-    ttsModel: z.string().trim().max(200).optional(),
-    ttsVoice: z.string().trim().max(200).optional(),
     clearKey: z.boolean().optional(),
   })
   .strict();
@@ -201,18 +199,11 @@ settingsRouter.put(
       : body.clearKey || providerChanged
         ? undefined
         : existing.apiKey;
-    const fallbackTts: { model?: string; voice?: string } = providerChanged
-      ? {}
-      : { model: existing.ttsModel, voice: existing.ttsVoice };
-    const ttsModel = (body.ttsModel ?? fallbackTts.model ?? preset?.ttsModel ?? '').trim();
-    const ttsVoice = (body.ttsVoice ?? fallbackTts.voice ?? preset?.ttsVoice ?? '').trim();
     saveAiConfig({
       provider: body.provider,
       baseUrl,
       model,
       ...(nextKey ? { apiKey: nextKey } : {}),
-      ...(ttsModel ? { ttsModel } : {}),
-      ...(ttsVoice ? { ttsVoice } : {}),
     });
     eventLog.append({
       level: 'info',

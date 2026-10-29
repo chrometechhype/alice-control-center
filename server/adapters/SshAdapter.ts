@@ -12,6 +12,8 @@ import type {
   ExecOptions,
   ExecResult,
   StationAdapter,
+  StreamExecOptions,
+  StreamExecResult,
 } from './StationAdapter.ts';
 
 const DEFAULT_TIMEOUT = 20_000;
@@ -324,6 +326,109 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
           stderr += `\n${streamError.message}`;
           finish(null);
         });
+      });
+    });
+  }
+
+  /**
+   * Alice's local TTS IPC is a length-prefixed protobuf conversation: the panel has to write the
+   * request and read frames back over the same channel, which `exec` (stdout collected until exit)
+   * cannot do. Closing the channel is how the listener is told the conversation is over.
+   */
+  async streamExec(command: string, options: StreamExecOptions = {}): Promise<StreamExecResult> {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT;
+    return this.withChannel((client) =>
+      this.runWithRetry(() => this.streamExecOnce(client, command, options, timeoutMs)),
+    );
+  }
+
+  private streamExecOnce(
+    client: Client,
+    command: string,
+    options: StreamExecOptions,
+    timeoutMs: number,
+  ): Promise<StreamExecResult> {
+    return new Promise<StreamExecResult>((resolve, reject) => {
+      const started = Date.now();
+      let stderr = '';
+      let timedOut = false;
+      let stopped = false;
+      let settled = false;
+      let channel: ClientChannel | undefined;
+
+      const finish = (code: number | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try {
+          channel?.close();
+        } catch {
+          // канал уже мог закрыться
+        }
+        resolve({
+          code,
+          stderr,
+          durationMs: Date.now() - started,
+          timedOut,
+          stopped,
+        });
+      };
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        this.timedOutExecs += 1;
+        finish(null);
+      }, timeoutMs);
+
+      client.exec(command, (error, stream) => {
+        if (error) {
+          this.refusedOpens += 1;
+          clearTimeout(timer);
+          if (!settled) {
+            settled = true;
+            reject(new AccError('SSH_EXEC_FAILED', error.message, 502));
+          }
+          return;
+        }
+        if (settled) {
+          try {
+            stream.close();
+          } catch {
+            // уже закрыт
+          }
+          return;
+        }
+        channel = stream;
+        stream.on('data', (chunk: Buffer) => {
+          if (settled) return;
+          try {
+            if (options.onStdout?.(chunk) === true) {
+              stopped = true;
+              finish(0);
+            }
+          } catch (parseError) {
+            stderr += `\n${parseError instanceof Error ? parseError.message : 'разбор ответа не удался'}`;
+            finish(null);
+          }
+        });
+        stream.stderr.on('data', (chunk: Buffer) => {
+          if (stderr.length >= 4000) return;
+          stderr += chunk.toString('utf8');
+          if (stderr.length > 4000) stderr = stderr.slice(0, 4000);
+        });
+        stream.on('close', (code: number | null) => finish(code));
+        stream.on('error', (streamError: Error) => {
+          stderr += `\n${streamError.message}`;
+          finish(null);
+        });
+        if (options.input?.length) {
+          try {
+            stream.write(options.input);
+          } catch (writeError) {
+            stderr += `\n${writeError instanceof Error ? writeError.message : 'запись не удалась'}`;
+            finish(null);
+          }
+        }
       });
     });
   }
@@ -769,6 +874,9 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
     }
     if (/ECONNREFUSED/i.test(message)) return 'SSH-порт закрыт: проверьте адрес и порт';
     if (/EHOSTUNREACH|ETIMEDOUT|ENETUNREACH/i.test(message)) return 'Устройство недоступно по сети';
+    if (/timed out while waiting for handshake/i.test(message)) {
+      return 'Колонка не ответила на SSH-рукопожатие: проверьте адрес, порт и что станция включена';
+    }
     return message;
   }
 }

@@ -31,6 +31,7 @@ const files = [
   'vite.config.ts',
   'start.bat',
   'start.sh',
+  'full-debug.sh',
   'install.ps1',
 ];
 const directories = ['dist', 'src', 'server', 'shared', 'public', 'tests', 'docs'];
@@ -41,6 +42,7 @@ for (const required of [
   'scripts/acc-common.ps1',
   'scripts/acc-start.ps1',
   'scripts/acc-tray.ps1',
+  'scripts/acc-full-debug.ps1',
 ]) {
   if (!fs.existsSync(path.join(root, required))) {
     throw new Error(`Не найден ${required}. Сначала выполните npm run build.`);
@@ -59,7 +61,7 @@ function copy(relativePath) {
 for (const file of files) copy(file);
 for (const directory of directories) copy(directory);
 fs.mkdirSync(path.join(releaseRoot, 'scripts'), { recursive: true });
-for (const script of ['apply-update.mjs', 'acc-common.ps1', 'acc-start.ps1', 'acc-tray.ps1']) {
+for (const script of ['apply-update.mjs', 'acc-common.ps1', 'acc-start.ps1', 'acc-tray.ps1', 'acc-full-debug.ps1']) {
   copy(`scripts/${script}`);
 }
 

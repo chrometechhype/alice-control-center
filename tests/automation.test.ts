@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { migrateScenario } from '../server/automation.ts';
+import { migrateScenario, planStepGroups } from '../server/automation.ts';
+import { stepSchema } from '../server/scenarioDsl.ts';
 import type { AutomationScenario } from '../shared/types.ts';
 
 const base = {
@@ -32,5 +33,41 @@ describe('migrateScenario', () => {
 
   it('leaves a scenario with neither action nor steps empty instead of inventing work', () => {
     expect(migrateScenario({ ...base }).steps).toEqual([]);
+  });
+});
+
+describe('simultaneous steps', () => {
+  const say = (text: string): AutomationScenario['steps'][number] => ({ kind: 'say', text });
+
+  it('runs unlinked steps one at a time, in order', () => {
+    expect(planStepGroups([say('раз'), say('два'), say('три')])).toEqual([[0], [1], [2]]);
+  });
+
+  it('starts a linked step in the same group as the step it names', () => {
+    const groups = planStepGroups([say('кольцо'), { ...say('голос'), parallelWith: 1 }, say('итог')]);
+    expect(groups).toEqual([[0, 1], [2]]);
+  });
+
+  it('pulls a whole chain into one group', () => {
+    const groups = planStepGroups([
+      say('раз'),
+      { ...say('два'), parallelWith: 1 },
+      { ...say('три'), parallelWith: 2 },
+    ]);
+    expect(groups).toEqual([[0, 1, 2]]);
+  });
+
+  it('ignores links to itself or to a later step', () => {
+    expect(planStepGroups([{ ...say('раз'), parallelWith: 1 }, say('два')])).toEqual([[0], [1]]);
+    expect(planStepGroups([{ ...say('раз'), parallelWith: 2 }, say('два')])).toEqual([[0], [1]]);
+  });
+});
+
+describe('step schema', () => {
+  it('accepts the 32nd step number and rejects anything higher', () => {
+    const step = { kind: 'say', text: 'Готово', parallelWith: 32 };
+    expect(stepSchema.safeParse(step).success).toBe(true);
+    expect(stepSchema.safeParse({ ...step, parallelWith: 33 }).success).toBe(false);
+    expect(stepSchema.safeParse({ ...step, parallelWith: 0 }).success).toBe(false);
   });
 });

@@ -8,7 +8,8 @@ import { requireZones } from './ledControl.ts';
 import { playSceneForSeconds, sleep, stopAnimation } from './ledAnimation.ts';
 import { buildScene } from './sceneDsl.ts';
 import { assertPlayableSoundPath } from './security/paths.ts';
-import { playDeviceFile, playTempAudio, synthesizeSpeech } from './voice.ts';
+import { speakWithAlice } from './aliceVoice.ts';
+import { playDeviceFile } from './voice.ts';
 import { safeErrorMessage } from './util.ts';
 
 const MAX_SCENARIOS = 50;
@@ -139,11 +140,10 @@ async function executeStep(step: ScenarioStep): Promise<string> {
     }
     case 'say': {
       const adapter = connectionManager.requireAdapter();
-      const speech = await synthesizeSpeech(step.text);
-      await playTempAudio(adapter, speech.audio, speech.ext);
-      return `Сказали «${step.text.slice(0, 40)}»${
-        speech.engine === 'local' ? ' (голос компьютера)' : ''
-      }`;
+      const speech = await speakWithAlice(adapter, step.text);
+      return speech.completed
+        ? `Алиса сказала «${step.text.slice(0, 40)}»`
+        : `Алиса начала говорить «${step.text.slice(0, 40)}», конец фразы не подтверждён`;
     }
     case 'sound': {
       const adapter = connectionManager.requireAdapter();
@@ -160,6 +160,44 @@ async function executeStep(step: ScenarioStep): Promise<string> {
   }
 }
 
+/**
+ * Steps that name an earlier step are started in the same tick: a ring pulse and the spoken warning
+ * must land together, not one after the other. Each returned group is executed with `Promise.all`,
+ * so every member begins before any of them has awaited the column.
+ */
+export function planStepGroups(steps: ScenarioStep[]): number[][] {
+  const parent = steps.map((_, index) => index);
+  const find = (index: number): number => {
+    let root = index;
+    while (parent[root] !== root) root = parent[root];
+    let cursor = index;
+    while (parent[cursor] !== cursor) {
+      const next = parent[cursor];
+      parent[cursor] = root;
+      cursor = next;
+    }
+    return root;
+  };
+  steps.forEach((step, index) => {
+    const link = step.parallelWith;
+    if (!link) return;
+    const target = link - 1;
+    // A step can only join a step that comes before it — a future step cannot start retroactively.
+    if (target < 0 || target >= index) return;
+    const own = find(index);
+    const other = find(target);
+    if (own !== other) parent[own] = other;
+  });
+  const groups = new Map<number, number[]>();
+  steps.forEach((_, index) => {
+    const root = find(index);
+    const list = groups.get(root);
+    if (list) list.push(index);
+    else groups.set(root, [index]);
+  });
+  return [...groups.values()].sort((left, right) => left[0] - right[0]);
+}
+
 async function executeScenario(scenario: AutomationScenario): Promise<string> {
   if (!scenario.steps.length) return 'В сценарии нет шагов';
   // Fail with «not connected» instead of letting the first device step complain about LED zones
@@ -167,11 +205,14 @@ async function executeScenario(scenario: AutomationScenario): Promise<string> {
   // rather than refusing on a transport that is already being rebuilt.
   if (scenario.steps.some((step) => step.kind !== 'notify' && step.kind !== 'pause'))
     await connectionManager.awaitReady(9_000, { verifyShell: true });
-  const notes: string[] = [];
-  for (const step of scenario.steps) {
-    notes.push(await executeStep(step));
+  const notes = new Array<string>(scenario.steps.length).fill('');
+  for (const group of planStepGroups(scenario.steps)) {
+    const results = await Promise.all(group.map((index) => executeStep(scenario.steps[index])));
+    group.forEach((index, position) => {
+      notes[index] = results[position];
+    });
   }
-  return notes.join(' · ');
+  return notes.filter(Boolean).join(' · ');
 }
 
 export async function runScenario(

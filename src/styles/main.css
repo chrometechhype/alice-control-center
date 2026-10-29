@@ -51,23 +51,24 @@
 }
 
 [data-theme='dark'] {
-  --bg: #171210;
-  --bg-soft: #1d1714;
-  --surface: #221b17;
-  --surface-2: #2c221e;
-  --surface-3: #382b25;
-  --surface-4: #45342d;
-  --text: #f8eae2;
-  --text-soft: #ddc8bd;
-  --muted: #b19a8e;
-  --line: #3b2d27;
-  --line-strong: #4e3c34;
+  /* Neutral graphite: the backdrop, cards and sidebar carry no colour from the station accent. */
+  --bg: #0b0c0e;
+  --bg-soft: #0f1013;
+  --surface: #131417;
+  --surface-2: #181a1e;
+  --surface-3: #202227;
+  --surface-4: #2a2c32;
+  --text: #eceef2;
+  --text-soft: #c4c8d0;
+  --muted: #8b909a;
+  --line: #24262c;
+  --line-strong: #33363d;
 
   --primary: #ffb59b;
   --primary-strong: #ffd8c9;
-  --primary-soft: #7b2e0c;
-  --primary-ink: #3a0d00;
-  --on-primary-soft: #ffdbcc;
+  --primary-soft: #3a2418;
+  --primary-ink: #2a0f05;
+  --on-primary-soft: #ffd9c9;
 
   --green: #9edcb6;
   --green-soft: #1e4a33;
@@ -1698,12 +1699,30 @@ ul {
 }
 
 .led-ring {
+  display: grid;
+  place-items: center;
   width: 74px;
   height: 74px;
+  padding: 0;
   border-radius: 50%;
   border: 7px solid var(--surface-3);
+  background: transparent;
   box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.18);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s var(--ease);
+}
+
+.led-ring:hover:not(:disabled) {
+  transform: scale(1.04);
+}
+
+.led-ring:disabled {
+  cursor: default;
+}
+
+.led-ring__icon {
+  color: var(--muted);
+  opacity: 0.55;
 }
 
 .led-swatch {

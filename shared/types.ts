@@ -228,9 +228,6 @@ export interface AiProviderPreset {
   model: string;
   requiresKey: boolean;
   note: string;
-  /** OpenAI-совместимый /audio/speech: модель и голос для озвучки текста. */
-  ttsModel?: string;
-  ttsVoice?: string;
 }
 
 export const AI_PROVIDER_PRESETS: AiProviderPreset[] = [
@@ -241,8 +238,6 @@ export const AI_PROVIDER_PRESETS: AiProviderPreset[] = [
     model: 'gpt-4o-mini',
     requiresKey: true,
     note: 'Официальный API OpenAI. Нужен ключ вида sk-...',
-    ttsModel: 'tts-1',
-    ttsVoice: 'alloy',
   },
   {
     id: 'openrouter',
@@ -259,8 +254,6 @@ export const AI_PROVIDER_PRESETS: AiProviderPreset[] = [
     model: 'llama-3.3-70b-versatile',
     requiresKey: true,
     note: 'Быстрый бесплатный тариф с ключом из консоли Groq.',
-    ttsModel: 'playai-tts',
-    ttsVoice: 'Apollo-PlayAI',
   },
   {
     id: 'pollinations',
@@ -301,8 +294,6 @@ export interface AiConfig {
   baseUrl: string;
   model: string;
   apiKey?: string;
-  ttsModel?: string;
-  ttsVoice?: string;
 }
 
 export interface PublicAiSettings {
@@ -311,8 +302,6 @@ export interface PublicAiSettings {
   model: string;
   hasKey: boolean;
   configured: boolean;
-  ttsModel: string;
-  ttsVoice: string;
   presets: AiProviderPreset[];
 }
 
@@ -386,6 +375,50 @@ export interface BluetoothStatus {
   raw: string;
 }
 
+export type WifiSecurity = 'open' | 'wep' | 'wpa' | 'wpa2' | 'wpa3' | 'enterprise';
+
+/** One `network={…}` block of the station's wpa_supplicant.conf. */
+export interface WifiConfigNetwork {
+  id: string;
+  ssid: string;
+  /** The stored password as written in the file — shown only inside the panel. */
+  psk: string | null;
+  keyMgmt: string | null;
+  priority: number | null;
+  hidden: boolean;
+  disabled: boolean;
+}
+
+export interface WifiScanEntry {
+  ssid: string;
+  bssid: string;
+  freq: number | null;
+  signal: number | null;
+  security: WifiSecurity;
+  hidden: boolean;
+}
+
+export interface WifiStatus {
+  /** False when the firmware has no `wpa_cli` — the panel then says so instead of faking a scan. */
+  available: boolean;
+  cliPath: string | null;
+  interface: string;
+  /** Null when none of the known config paths exists. */
+  configPath: string | null;
+  /** `wpa_state` as reported by wpa_cli: COMPLETED, SCANNING, DISCONNECTED… */
+  state: string;
+  connected: {
+    ssid: string;
+    psk: string | null;
+    keyMgmt: string | null;
+    bssid: string | null;
+    ip: string | null;
+    freq: number | null;
+  } | null;
+  networks: WifiConfigNetwork[];
+  raw: string;
+}
+
 /** Live ALSA state, read straight from `amixer sget Master` on the station. */
 export interface AudioState {
   /** Volume on Alice's own scale — the number she will say out loud. */
@@ -449,14 +482,17 @@ export type SceneEffect = (typeof SCENE_EFFECTS)[number];
 /**
  * One move in a scenario. Steps run in order, so «замигай красным и скажи ошибка» is a led step
  * followed by a say step. LED steps keep a recipe instead of pixels: the ring grows with the model.
+ * `parallelWith` is the 1-based number of an earlier step to start in the same tick — the ring and
+ * the voice then begin together instead of one after the other.
  */
-export type ScenarioStep =
+export type ScenarioStep = (
   | { kind: 'say'; text: string }
   | { kind: 'sound'; path: string }
   | { kind: 'led'; effect: SceneEffect; colors: string[]; fps: number; seconds: number; intensity?: number; reverse?: boolean }
   | { kind: 'pause'; seconds: number }
   | { kind: 'notify'; text: string }
-  | { kind: 'diagnostic' };
+  | { kind: 'diagnostic' }
+) & { parallelWith?: number };
 
 export type ScenarioStepKind = ScenarioStep['kind'];
 

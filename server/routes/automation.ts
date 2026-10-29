@@ -30,13 +30,21 @@ const scenarioInput = z.object({
     .min(5, 'Cooldown короче 5 секунд не имеет смысла')
     .max(86_400, 'Cooldown длиннее суток')
     .default(60),
-  steps: z.array(stepSchema).min(1, 'В сценарии нет шагов').max(8, 'Больше восьми шагов в сценарии не нужно'),
+  steps: z.array(stepSchema).min(1, 'В сценарии нет шагов').max(32, 'В сценарии не больше 32 шагов'),
 });
 
 function validateSteps(steps: AutomationScenario['steps']): void {
-  for (const step of steps) {
+  steps.forEach((step, index) => {
     if (step.kind === 'sound') assertPlayableSoundPath(step.path);
-  }
+    if (step.parallelWith == null) return;
+    if (step.parallelWith < 1 || step.parallelWith >= index + 1) {
+      throw new AccError(
+        'BAD_PARALLEL_STEP',
+        `Шаг ${index + 1}: одновременно можно стартовать только с предыдущим шагом (1–${index})`,
+        400,
+      );
+    }
+  });
 }
 
 automationRouter.get(

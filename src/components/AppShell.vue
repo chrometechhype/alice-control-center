@@ -73,6 +73,7 @@ const navGroups: NavGroup[] = [
       { to: '/sounds', label: 'Sound Studio', icon: AudioLines },
       { to: '/led', label: 'LED Studio', icon: Lightbulb },
       { to: '/fun', label: 'Fun Lab', icon: FlaskConical },
+      { to: '/wifi', label: 'Wi-Fi', icon: Wifi },
       { to: '/bluetooth', label: 'Bluetooth', icon: Bluetooth },
     ],
   },

@@ -258,7 +258,11 @@ export async function runProbe(adapter: StationAdapter): Promise<ProbeResult> {
     ),
     led: capability(
       ledZones.length > 0,
-      ledZones.length ? undefined : framebuffer ? 'LED через sysfs не найден, панель управляется через framebuffer' : 'LED не обнаружены',
+      ledZones.length
+        ? undefined
+        : framebuffer
+          ? 'LED-кольцо через sysfs не найдено: дисплеем и часами этой модели управляет прошивка, ACC не пишет в её framebuffer'
+          : 'LED не обнаружены',
       {
         kind: ledZones.length ? 'sysfs' : framebuffer ? 'framebuffer' : 'none',
         zones: ledZones,

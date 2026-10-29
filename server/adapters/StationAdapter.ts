@@ -12,6 +12,23 @@ export interface ExecResult {
   truncated: boolean;
 }
 
+export interface StreamExecOptions {
+  timeoutMs?: number;
+  /** Written to the channel's stdin right after it opens; stdin stays open until the channel closes. */
+  input?: Buffer;
+  /** Return true to stop reading and close the channel early (the command is done). */
+  onStdout?: (chunk: Buffer) => boolean | void;
+}
+
+export interface StreamExecResult {
+  code: number | null;
+  stderr: string;
+  durationMs: number;
+  timedOut: boolean;
+  /** True when `onStdout` asked to stop before the command exited on its own. */
+  stopped: boolean;
+}
+
 export interface AdapterStat {
   size: number;
   mtimeMs: number;
@@ -46,6 +63,8 @@ export interface StationAdapter {
   disconnect(): Promise<void>;
   isConnected(): boolean;
   exec(command: string, options?: ExecOptions): Promise<ExecResult>;
+  /** Bidirectional channel for protocols that stream bytes both ways (Alice's TTS IPC). */
+  streamExec?(command: string, options?: StreamExecOptions): Promise<StreamExecResult>;
   readFile(remotePath: string, maxBytes?: number): Promise<Buffer>;
   writeFile(remotePath: string, data: Buffer, mode?: number): Promise<void>;
   listDir(remotePath: string): Promise<AdapterDirEntry[]>;

@@ -121,6 +121,32 @@ function setColor(index: number, event: Event): void {
   colors.value[index] = value;
 }
 
+/**
+ * The colour input is tiny, and clicking the ring felt like it should open the picker but did
+ * nothing. Each zone keeps its own input, so «circle → colour» always refers to that exact zone.
+ */
+const swatches = new Map<number, HTMLInputElement>();
+
+function setSwatch(index: number, element: unknown): void {
+  if (element instanceof HTMLInputElement) swatches.set(index, element);
+  else swatches.delete(index);
+}
+
+function openPicker(index: number): void {
+  const input = swatches.get(index);
+  if (!input || input.disabled) return;
+  const picker = input as HTMLInputElement & { showPicker?: () => void };
+  try {
+    if (typeof picker.showPicker === 'function') {
+      picker.showPicker();
+      return;
+    }
+  } catch {
+    // Safari и старый Chromium запрещают showPicker вне жеста — остаётся обычный клик по input.
+  }
+  input.click();
+}
+
 function presetColors(preset: LedPreset): string[] {
   const frame = preset.frames[0] ?? [];
   return frame.map((color) => rgbToHex(color));
@@ -297,11 +323,12 @@ async function applyPreset(preset: LedPreset): Promise<void> {
   busy.value = true;
   error.value = '';
   try {
-    await api.post('/led/apply', { zones: preset.frames[0] });
+    // A preset is an effect: «Сброс» must be able to put the ring back to what it showed before.
+    await api.post('/led/apply', { zones: preset.frames[0], effect: true });
     colors.value = (preset.frames[0] ?? []).map((color) => rgbToHex(color));
     stopLocalAnimationTimer();
     animationRunning.value = false;
-    pushToast('ok', `Применён пресет «${preset.name}»`);
+    pushToast('ok', `Применён пресет «${preset.name}». «Сброс» вернёт цвет до него`);
     await load();
   } catch (caught) {
     error.value = errorMessage(caught);
@@ -459,7 +486,17 @@ onBeforeUnmount(stopLocalAnimationTimer);
 
         <div v-else class="led-grid">
           <div v-for="zone in zones" :key="`${zone.red}-${zone.green}-${zone.blue}`" class="led-zone">
-            <div class="led-ring" :style="zoneStyle(zone.index)" />
+            <button
+              type="button"
+              class="led-ring"
+              :style="zoneStyle(zone.index)"
+              :disabled="busy"
+              :aria-label="`Выбрать цвет зоны ${zone.index + 1}`"
+              :title="`Зона ${zone.index + 1}: ${zoneColor(zone.index).toUpperCase()}`"
+              @click="openPicker(zone.index)"
+            >
+              <Palette :size="18" class="led-ring__icon" />
+            </button>
             <div class="text-center">
               <div style="font-size: 12.5px; font-weight: 650">Зона {{ zone.index + 1 }}</div>
               <div class="muted mono" style="font-size: 10.5px">{{ zone.prefix }} · ring {{ zone.ring }}</div>
@@ -468,12 +505,15 @@ onBeforeUnmount(stopLocalAnimationTimer);
               <div class="row">
                 <span class="muted" style="font-size: 11.5px">Цвет</span>
                 <input
+                  :ref="(element) => setSwatch(zone.index, element)"
                   type="color"
                   class="led-swatch"
                   :value="zoneColor(zone.index)"
                   :disabled="busy"
+                  :aria-label="`Цвет зоны ${zone.index + 1}`"
                   @input="setColor(zone.index, $event)"
                 />
+                <span class="mono" style="font-size: 10.5px">{{ zoneColor(zone.index).toUpperCase() }}</span>
               </div>
               <div class="row">
                 <span class="muted" style="font-size: 11.5px">Каналы</span>

@@ -9,6 +9,8 @@ import {
   BT_DEVICES_MARK,
   BT_PAIRED_MARK,
   bluetoothPairedFilterWorks,
+  bluetoothSessionConnected,
+  bluetoothSessionPaired,
   explainBtFailure,
   parseBluetoothctlShow,
   parseBtBatch,
@@ -53,15 +55,34 @@ async function runBluetoothctl(args: string, timeoutMs = 20_000) {
   );
 }
 
-function isConnectedOutput(stdout: string): boolean {
-  return /Connection successful|Connected: yes/i.test(stdout);
+/**
+ * One interactive bluetoothctl with a script on stdin. A plain `bluetoothctl pair XX` runs with no
+ * agent at all, and BlueZ answers «Failed to pair: org.bluez.Error.NoAgent» — which is why pairing
+ * worked from a phone but not from the panel. Agent, pairing and connection share one process, so
+ * the agent is still registered when the target asks for it.
+ */
+async function bluetoothSession(commands: string[], timeoutMs = 45_000) {
+  const script = ['agent NoInputNoOutput', 'default-agent', ...commands, 'quit'].join('\n');
+  return connectionManager.stationRead((adapter) =>
+    adapter.exec(`bluetoothctl <<'ACC_BT'\n${script}\nACC_BT`, { timeoutMs, maxBytes: 200_000 }),
+  );
 }
 
-/** Bonded addresses only — `devices` also lists what the last scan left in the adapter cache. */
-async function bondedAddresses(): Promise<Set<string>> {
-  const result = await runBluetoothctl('devices Paired', 12_000).catch(() => null);
-  if (!result || result.code !== 0) return new Set();
-  return new Set(parseDeviceLines(result.stdout).map((device) => device.address));
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function connectDevice(address: string, knownPaired: boolean): Promise<{ connected: boolean; paired: boolean; output: string }> {
+  // Trust before connecting: a trusted gadget is allowed to reconnect on its own later, and BlueZ
+  // refuses some audio devices a second connect while they are untrusted.
+  const commands = knownPaired
+    ? [`trust ${address}`, `connect ${address}`, `info ${address}`]
+    : [`trust ${address}`, `pair ${address}`, `connect ${address}`, `info ${address}`];
+  const result = await bluetoothSession(commands);
+  const plain = `${result.stdout}\n${result.stderr}`;
+  return {
+    connected: bluetoothSessionConnected(plain),
+    paired: bluetoothSessionPaired(plain, knownPaired),
+    output: plain.replace(/\x1b\[[0-9;]*m/g, '').trim(),
+  };
 }
 
 interface BtBatchResult {
@@ -199,33 +220,36 @@ bluetoothRouter.post(
     const parsed = z.object({ address: z.string().regex(MAC) }).safeParse(req.body);
     if (!parsed.success) throw new AccError('BAD_ADDRESS', 'Некорректный MAC-адрес', 400);
     const address = parsed.data.address.toUpperCase();
-    // A bonded device does not need pairing again, and re-pairing costs 30 seconds of a refused
-    // exchange that looks like a hang.
-    if (!(await bondedAddresses()).has(address)) {
-      const pair = await runBluetoothctl(`pair ${address}`, 30_000).catch(() => null);
-      if (pair && pair.code === 0) {
-        eventLog.append({
-          level: 'info',
-          module: 'bluetooth',
-          operation: 'pair',
-          result: 'ok',
-          message: `Bluetooth: устройство ${address} сопряжено`,
-        });
+
+    // The card already knows whether this device is bonded: pairing a bonded one costs 30 seconds of
+    // a refused exchange that looks like a hang, and skipping pairing on an unbonded one leaves BlueZ
+    // with nothing to connect to.
+    const before = await readBtBatch().catch(() => null);
+    const known = before?.devices.find((device) => device.address === address) ?? null;
+    if (known?.connected) {
+      sendOk(res, { address, connected: true, alreadyConnected: true, output: '' });
+      return;
+    }
+
+    let knownPaired = known?.paired ?? false;
+    let attempt = await connectDevice(address, knownPaired);
+    if (!attempt.connected) {
+      const raw = attempt.output;
+      if (/not available|host is down|page timeout|timed out|not powered/i.test(raw)) {
+        // BlueZ drops the device object when a paired gadget stops being seen, and then refuses to
+        // connect to «an address it doesn't know». One detached scan re-resolves it, so retry once.
+        await execOnStation(
+          `( bluetoothctl --timeout 6 scan on > ${SCAN_LOG} 2>&1 </dev/null & )`,
+          12_000,
+        ).catch(() => undefined);
+        await sleep(6_500);
+        knownPaired = attempt.paired;
+        attempt = await connectDevice(address, knownPaired);
       }
     }
-    let result = await runBluetoothctl(`connect ${address}`, 30_000);
-    if (!isConnectedOutput(result.stdout) && /not available/i.test(`${result.stderr}${result.stdout}`)) {
-      // BlueZ drops the device object when a paired gadget stops being seen, and then refuses to
-      // connect to «an address it doesn't know». One detached scan re-resolves it, so retry once.
-      await execOnStation(
-        `( bluetoothctl --timeout 5 scan on > ${SCAN_LOG} 2>&1 </dev/null & )`,
-        12_000,
-      ).catch(() => undefined);
-      await new Promise((resolve) => setTimeout(resolve, 6_000));
-      result = await runBluetoothctl(`connect ${address}`, 30_000);
-    }
-    if (!isConnectedOutput(result.stdout)) {
-      const raw = `${result.stderr.trim()} ${result.stdout.trim()}`.trim();
+
+    if (!attempt.connected) {
+      const raw = attempt.output;
       eventLog.append({
         level: 'warn',
         module: 'bluetooth',
@@ -236,7 +260,15 @@ bluetoothRouter.post(
       });
       throw new AccError('BT_CONNECT_FAILED', explainBtFailure(raw, address), 502);
     }
-    await runBluetoothctl(`trust ${address}`, 10_000).catch(() => undefined);
+    if (!attempt.paired) {
+      eventLog.append({
+        level: 'warn',
+        module: 'bluetooth',
+        operation: 'pair',
+        result: 'error',
+        message: `Bluetooth: ${address} подключено без сопряжения`,
+      });
+    }
     eventLog.append({
       level: 'success',
       module: 'bluetooth',
@@ -244,7 +276,7 @@ bluetoothRouter.post(
       result: 'ok',
       message: `Bluetooth: подключено устройство ${address}`,
     });
-    sendOk(res, { address, connected: true, output: result.stdout });
+    sendOk(res, { address, connected: true, paired: attempt.paired, output: attempt.output });
   }),
 );
 

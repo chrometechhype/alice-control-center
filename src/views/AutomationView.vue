@@ -53,7 +53,11 @@ interface StepDraft {
   colors: string;
   fps: number;
   seconds: number;
+  /** 1-based number of an earlier step to start in the same tick. */
+  parallelWith: number | null;
 }
+
+const MAX_STEPS = 32;
 
 interface FormState {
   name: string;
@@ -136,27 +140,51 @@ const triggerLabels = computed<Record<string, string>>(() => {
 });
 
 function emptyStep(kind: ScenarioStepKind): StepDraft {
-  return { kind, text: '', path: '', effect: 'pulse', colors: '#ff2d2d', fps: 16, seconds: kind === 'pause' ? 1 : 4 };
+  return {
+    kind,
+    text: '',
+    path: '',
+    effect: 'pulse',
+    colors: '#ff2d2d',
+    fps: 16,
+    seconds: kind === 'pause' ? 1 : 4,
+    parallelWith: null,
+  };
 }
 
 function stepToDraft(step: ScenarioStep): StepDraft {
   switch (step.kind) {
     case 'led':
-      return { ...emptyStep('led'), effect: step.effect, colors: step.colors.join(' '), fps: step.fps, seconds: step.seconds };
+      return {
+        ...emptyStep('led'),
+        effect: step.effect,
+        colors: step.colors.join(' '),
+        fps: step.fps,
+        seconds: step.seconds,
+        parallelWith: step.parallelWith ?? null,
+      };
     case 'say':
-      return { ...emptyStep('say'), text: step.text };
+      return { ...emptyStep('say'), text: step.text, parallelWith: step.parallelWith ?? null };
     case 'sound':
-      return { ...emptyStep('sound'), path: step.path };
+      return { ...emptyStep('sound'), path: step.path, parallelWith: step.parallelWith ?? null };
     case 'pause':
-      return { ...emptyStep('pause'), seconds: step.seconds };
+      return { ...emptyStep('pause'), seconds: step.seconds, parallelWith: step.parallelWith ?? null };
     case 'notify':
-      return { ...emptyStep('notify'), text: step.text };
+      return { ...emptyStep('notify'), text: step.text, parallelWith: step.parallelWith ?? null };
     default:
-      return emptyStep('diagnostic');
+      return { ...emptyStep('diagnostic'), parallelWith: step.parallelWith ?? null };
   }
 }
 
-function draftToStep(draft: StepDraft): ScenarioStep {
+function draftToStep(draft: StepDraft, index?: number): ScenarioStep {
+  const step = stepBody(draft);
+  // A step may only start together with an earlier step; the number is 1-based in the UI.
+  const link = draft.parallelWith;
+  if (index == null || link == null || link < 1 || link > index) return step;
+  return { ...step, parallelWith: link };
+}
+
+function stepBody(draft: StepDraft): ScenarioStep {
   switch (draft.kind) {
     case 'led':
       return {
@@ -197,11 +225,16 @@ function stepText(step: ScenarioStep): string {
 }
 
 function stepSummary(draft: StepDraft): string {
-  return stepText(draftToStep(draft));
+  const link = draft.parallelWith ? `⇉ одновременно с шагом ${draft.parallelWith} · ` : '';
+  return `${link}${stepText(draftToStep(draft))}`;
 }
 
 function scenarioSummary(scenario: AutomationScenario): string {
-  return scenario.steps.map(stepText).join(' → ') || 'нет шагов';
+  return (
+    scenario.steps
+      .map((step) => `${stepText(step)}${step.parallelWith ? ` ⇉ с шагом ${step.parallelWith}` : ''}`)
+      .join(' → ') || 'нет шагов'
+  );
 }
 
 function conditionLabel(scenario: AutomationScenario): string {
@@ -282,16 +315,26 @@ function openEdit(scenario: AutomationScenario): void {
 }
 
 function addStep(kind: ScenarioStepKind): void {
-  if (form.steps.length >= 8) {
-    formError.value = 'Больше восьми шагов сценарий не помещается';
+  if (form.steps.length >= MAX_STEPS) {
+    formError.value = `В сценарии не больше ${MAX_STEPS} шагов`;
     return;
   }
   form.steps.push(emptyStep(kind));
   if (kind === 'sound') void ensureSounds();
 }
 
+/** After removing or reordering, a link must still point at an earlier step that exists. */
+function fixParallelLinks(): void {
+  form.steps.forEach((step, index) => {
+    if (step.parallelWith != null && (step.parallelWith < 1 || step.parallelWith > index)) {
+      step.parallelWith = null;
+    }
+  });
+}
+
 function removeStep(index: number): void {
   form.steps.splice(index, 1);
+  fixParallelLinks();
 }
 
 function moveStep(index: number, delta: number): void {
@@ -303,6 +346,7 @@ function moveStep(index: number, delta: number): void {
   if (!from || !to) return;
   steps[index] = to;
   steps[target] = from;
+  fixParallelLinks();
 }
 
 async function generate(): Promise<void> {
@@ -330,6 +374,11 @@ function validateForm(): string | null {
   if (form.trigger === 'metrics' && !Number.isFinite(Number(form.value))) return 'Укажите числовой порог условия';
   if (!form.steps.length) return 'Добавьте хотя бы один шаг';
   for (const [index, step] of form.steps.entries()) {
+    if (step.parallelWith != null && (step.parallelWith < 1 || step.parallelWith > index)) {
+      return index === 0
+        ? 'Шаг 1 — первый в сценарии: одновременно стартовать не с чем'
+        : `Шаг ${index + 1}: одновременно можно стартовать только с шагом 1–${index}`;
+    }
     const draft = draftToStep(step);
     if (draft.kind === 'say' && !draft.text) return `Шаг ${index + 1}: пустой текст для озвучки`;
     if (draft.kind === 'sound' && !draft.path) return `Шаг ${index + 1}: выберите звук`;
@@ -360,7 +409,7 @@ async function save(): Promise<void> {
         ? { metric: form.metric, op: form.op, value: Number(form.value) }
         : undefined,
     cooldownSec: Math.max(5, Number(form.cooldownSec) || 60),
-    steps: form.steps.map(draftToStep),
+    steps: form.steps.map((step, index) => draftToStep(step, index)),
   };
   try {
     if (editingId.value) {
@@ -561,7 +610,7 @@ onMounted(() => {
           <li><Check :size="14" /><span>Не перезапускают станцию и не вызывают reboot.</span></li>
           <li><Check :size="14" /><span>Не устанавливают пакеты и не скачивают бинарники.</span></li>
           <li><Check :size="14" /><span>Диагностика выполняет только фиксированный набор команд.</span></li>
-          <li><Check :size="14" /><span>Озвучка играет один раз и не попадает в библиотеку станции.</span></li>
+          <li><Check :size="14" /><span>Озвучка говорит голосом Алисы и не попадает в библиотеку станции.</span></li>
         </ul>
       </article>
     </template>
@@ -570,7 +619,7 @@ onMounted(() => {
       :open="modalOpen"
       wide
       :title="editingId ? 'Изменить сценарий' : 'Новый сценарий'"
-      subtitle="Шаги выполняются по порядку: свет, голос, журнал"
+      subtitle="До 32 шагов подряд; шаг можно привязать к предыдущему и стартовать вместе с ним"
       @close="modalOpen = false"
     >
       <div class="stack" style="gap: 14px">
@@ -637,7 +686,7 @@ onMounted(() => {
         <div class="card card--flush">
           <div class="file-toolbar">
             <div class="card-title" style="flex: 1"><Zap :size="15" /> Шаги сценария</div>
-            <span class="pill pill--muted">{{ form.steps.length }} / 8</span>
+            <span class="pill pill--muted">{{ form.steps.length }} / {{ MAX_STEPS }}</span>
           </div>
           <div v-if="!form.steps.length" class="empty" style="padding: 22px">
             <p>Шагов нет. Добавьте шаг или доверьте это ИИ.</p>
@@ -707,8 +756,23 @@ onMounted(() => {
 
                   <span v-else class="muted">{{ stepSummary(step) }}</span>
                 </div>
-                <div class="list-meta">
+                <div class="list-meta" style="align-items: center; gap: 8px">
                   <span>{{ stepSummary(step) }}</span>
+                  <span v-if="index > 0" class="row" style="gap: 6px; align-items: center">
+                    <label class="muted" :for="`step-parallel-${index}`" style="font-size: 11.5px">
+                      одновременно с шагом
+                    </label>
+                    <select
+                      :id="`step-parallel-${index}`"
+                      v-model.number="step.parallelWith"
+                      class="select"
+                      style="width: 92px"
+                      aria-label="Стартовать одновременно с шагом"
+                    >
+                      <option :value="null">—</option>
+                      <option v-for="n in index" :key="n" :value="n">{{ n }}</option>
+                    </select>
+                  </span>
                 </div>
               </div>
               <div class="row" style="gap: 4px">
@@ -750,9 +814,11 @@ onMounted(() => {
         <div class="alert alert--info">
           <Info :size="15" />
           <div>
-            Сценарий хранится в data/scenarios.json. Кольцо описано рецептом (цвета и движение), а не
-            пикселями — на станции с другим числом зон оно растянется само. Озвучка говорит голосом
-            ИИ-провайдера, а если у него нет <span class="mono">/audio/speech</span> — голосом Windows.
+            «Одновременно с шагом N» запускает шаг в тот же момент, что и шаг N, — без задержки
+            между кольцом и голосом. Связать можно только с предыдущим шагом. Сценарий хранится в
+            data/scenarios.json. Кольцо описано рецептом (цвета и движение), а не пикселями — на
+            станции с другим числом зон оно растянется само. Озвучка говорит штатным голосом Алисы
+            через саму станцию и не зависит от ИИ-провайдера.
           </div>
         </div>
       </div>
