@@ -72,13 +72,6 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction): v
   next();
 }
 
-export function localOnly(req: Request, _res: Response, next: NextFunction): void {
-  if (!isLoopback(req)) {
-    throw new AccError('LOCAL_ONLY', 'Действие доступно только с компьютера с backend', 403);
-  }
-  next();
-}
-
 export function authStatus(req: Request): AuthStatus {
   const lanEnabled = getSettings().lanAccess;
   return {

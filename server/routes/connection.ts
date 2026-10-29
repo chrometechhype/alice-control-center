@@ -6,7 +6,6 @@ import { AccError } from '../errors.ts';
 import { discoverSshHosts, localSubnets } from '../discovery.ts';
 import { asyncRoute, sendOk } from '../http.ts';
 import { checkHostTools } from '../hostTools.ts';
-import { localOnly } from '../auth.ts';
 
 const connectionInput = z.object({
   host: z.string().trim().min(1).max(255),
@@ -59,7 +58,6 @@ export const connectionRouter = Router();
 
 connectionRouter.post(
   '/discover',
-  localOnly,
   asyncRoute(async (req, res) => {
     const timeoutMs = Math.min(Math.max(Number(req.body?.timeoutMs) || 6000, 2000), 15000);
     const hosts = await discoverSshHosts({ timeoutMs });

@@ -65,11 +65,21 @@ async function github<T>(url: string): Promise<T> {
   try {
     const response = await fetch(url, { headers: headers(), signal: controller.signal });
     if (!response.ok) {
+      // The anonymous quota is 60 requests an hour for the whole shared address, and «обновить»
+      // looked broken while it lasted: the numbers stayed old with no explanation.
+      const limitReset = Number(response.headers.get('x-ratelimit-reset') ?? 0);
+      const limited = response.status === 403 || response.status === 429;
+      const waitMinutes =
+        limited && Number.isFinite(limitReset) && limitReset > 0
+          ? Math.max(1, Math.ceil((limitReset * 1000 - Date.now()) / 60_000))
+          : 0;
       throw new AccError(
         'INSIGHTS_FAILED',
-        response.status === 403
-          ? 'GitHub ограничил запросы. Цифры обновятся позже.'
-          : `GitHub ответил ошибкой ${response.status}.`,
+        waitMinutes > 0
+          ? `GitHub ограничил запросы (60 в час на адрес). Следующая попытка через ${waitMinutes} мин.`
+          : limited
+            ? 'GitHub ограничил запросы. Попробуйте позже.'
+            : `GitHub ответил ошибкой ${response.status}.`,
         502,
       );
     }
@@ -142,8 +152,14 @@ export async function repoInsights(force = false): Promise<RepoInsights> {
       return value;
     } catch (error) {
       // Running out of the hourly GitHub quota must not blank the strip: the numbers already read
-      // keep their own `checkedAt`, which says exactly how old they are.
-      if (cached) return cached.value;
+      // keep their own `checkedAt`, which says exactly how old they are. The reason travels with
+      // them, so «обновить» can say why nothing moved instead of looking broken.
+      if (cached) {
+        return {
+          ...cached.value,
+          refreshError: error instanceof AccError ? error.message : 'Не удалось связаться с API GitHub.',
+        };
+      }
       throw error;
     } finally {
       inFlight = null;

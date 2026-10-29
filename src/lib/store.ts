@@ -250,7 +250,11 @@ export async function refreshBackups(): Promise<void> {
  */
 export async function loadInsights(force = false): Promise<void> {
   try {
-    store.insights = await api.get<RepoInsights>(`/insights${force ? '?force=1' : ''}`, 20_000);
+    const value = await api.get<RepoInsights>(`/insights${force ? '?force=1' : ''}`, 20_000);
+    store.insights = value;
+    // Pressing «обновить» and getting the same old numbers looked like a broken button. Say why.
+    if (force && value.refreshError) pushToast('info', value.refreshError, 9000);
+    else if (force) pushToast('ok', 'Цифры с GitHub обновлены');
   } catch {
     // A rate-limited refresh keeps the previous numbers: their «обновлено» timestamp says how old
     // they are, and a failed poll must not empty the strip.

@@ -590,4 +590,6 @@ export interface RepoInsights {
   forks: number;
   watchers: number;
   checkedAt: number;
+  /** Why a forced refresh returned the previous numbers instead of new ones. */
+  refreshError?: string;
 }

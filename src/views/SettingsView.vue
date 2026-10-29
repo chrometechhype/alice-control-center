@@ -545,7 +545,8 @@ onMounted(() => {
               <strong>Разрешить доступ по локальной сети</strong>
               <span>
                 Включается явно. После включения все запросы требуют токен доступа; backend начнёт
-                слушать сетевой адрес после перезапуска.
+                слушать сетевой адрес после перезапуска. Токен даёт полный доступ — кому он известен,
+                тот управляет станцией наравне с этим компьютером.
               </span>
             </div>
             <div class="setting-row__control">
@@ -563,7 +564,7 @@ onMounted(() => {
           <div class="setting-row">
             <div class="setting-row__text">
               <strong>Токен доступа</strong>
-              <span>Показывается только на компьютере, где запущен backend.</span>
+              <span>Один на панель: с ним любое устройство в сети получает полный доступ.</span>
             </div>
             <div class="setting-row__control">
               <span class="code-inline" style="min-width: 118px; text-align: center">
@@ -590,7 +591,7 @@ onMounted(() => {
 
           <div v-if="tokenError" class="alert alert--warn mt-8">
             <AlertTriangle :size="15" />
-            <div>{{ tokenError }} Токен можно посмотреть только на компьютере с backend.</div>
+            <div>{{ tokenError }}</div>
           </div>
 
           <template v-if="lanEnabled">

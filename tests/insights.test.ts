@@ -68,5 +68,36 @@ describe('repoInsights', () => {
     const insights = await fresh.repoInsights(true);
     expect(insights.totalDownloads).toBe(94);
     expect(insights.stars).toBe(11);
+    expect(insights.refreshError).toBeTruthy();
+  });
+
+  it('says how long the GitHub limit lasts instead of returning silently', async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'acc-insights-'));
+    const resetAt = Math.floor(Date.now() / 1000) + 20 * 60;
+    const value = {
+      repo: 'chrometechhype/alice-control-center',
+      totalDownloads: 94,
+      releases: [],
+      latest: null,
+      stars: 11,
+      forks: 1,
+      watchers: 0,
+      checkedAt: Date.now() - 60_000,
+    };
+    fs.writeFileSync(path.join(dir, 'insights.json'), JSON.stringify({ at: value.checkedAt, value }));
+    process.env.ACC_DATA_DIR = dir;
+    vi.resetModules();
+    vi.stubGlobal('fetch', async () => {
+      return new Response('{"message":"API rate limit exceeded"}', {
+        status: 403,
+        headers: { 'x-ratelimit-reset': String(resetAt) },
+      });
+    });
+
+    const fresh = await import('../server/insights.ts');
+    const insights = await fresh.repoInsights(true);
+    expect(insights.totalDownloads).toBe(94);
+    expect(insights.refreshError).toMatch(/ограничил запросы/);
+    expect(insights.refreshError).toMatch(/\d+ мин/);
   });
 });

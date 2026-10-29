@@ -12,7 +12,7 @@ import {
   saveAiConfig,
   updateSettings,
 } from '../config.ts';
-import { localOnly, requireAuth } from '../auth.ts';
+import { requireAuth } from '../auth.ts';
 import { asyncRoute, sendOk } from '../http.ts';
 import { eventLog } from '../events.ts';
 import { AccError } from '../errors.ts';
@@ -65,7 +65,6 @@ settingsRouter.patch(
 
 settingsRouter.get(
   '/token',
-  localOnly,
   asyncRoute(async (_req, res) => {
     sendOk(res, { token: getLanToken(), lanAddresses: lanAddresses(), port: Number(process.env.ACC_PORT ?? 8722) });
   }),
@@ -73,7 +72,6 @@ settingsRouter.get(
 
 settingsRouter.post(
   '/token/rotate',
-  localOnly,
   asyncRoute(async (_req, res) => {
     const token = rotateLanToken();
     eventLog.append({
@@ -89,7 +87,6 @@ settingsRouter.post(
 
 settingsRouter.get(
   '/phone-access',
-  localOnly,
   asyncRoute(async (_req, res) => {
     const port = Number(process.env.ACC_PORT ?? 8722);
     const stationHost = connectionManager.getStatus().host ?? null;
@@ -108,7 +105,6 @@ settingsRouter.get(
 
 settingsRouter.post(
   '/firewall',
-  localOnly,
   asyncRoute(async (_req, res) => {
     const port = Number(process.env.ACC_PORT ?? 8722);
     if (process.platform !== 'win32') {
@@ -129,7 +125,6 @@ settingsRouter.post(
 
 settingsRouter.get(
   '/lan-qr',
-  localOnly,
   asyncRoute(async (req, res) => {
     const port = Number(process.env.ACC_PORT ?? 8722);
     const stationHost = typeof req.query.station === 'string' ? req.query.station : null;
