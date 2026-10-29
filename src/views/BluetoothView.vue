@@ -140,7 +140,7 @@ async function connect(device: BtDevice): Promise<void> {
     await load();
     const route = result.audioRoute;
     if (route?.on) {
-      pushToast('ok', `Подключено: ${device.name}. Звук станции идёт в наушники`);
+      pushToast('ok', `Подключено: ${device.name}. Голос Алисы и звуки панели идут в наушники`);
     } else if (route?.error) {
       pushToast('error', `Подключено: ${device.name}. Но звук остался в колонке: ${route.error}`);
     } else {
@@ -182,7 +182,7 @@ async function setAudioRoute(on: boolean): Promise<void> {
       if (result.error) pushToast('error', result.error);
       else pushToast('info', 'Звук снова в колонке');
     } else {
-      pushToast('ok', `Звук станции идёт в наушники${result.name ? `: ${result.name}` : ''}`);
+      pushToast('ok', `Голос Алисы и звуки панели идут в наушники${result.name ? `: ${result.name}` : ''}. Яндекс Музыку прошивка в наушники не отдаёт`);
     }
   } catch (caught) {
     error.value = errorMessage(caught);
@@ -304,8 +304,9 @@ onMounted(() => {
       <div v-if="routedAddress" class="alert alert--info">
         <Headphones :size="16" />
         <div style="flex: 1">
-          Звук станции идёт в наушники{{ routedDevice ? ` «${routedDevice.name}»` : '' }}: Алиса,
-          музыка и звуки из панели играют там.
+          Звук станции идёт в наушники{{ routedDevice ? ` «${routedDevice.name}»` : '' }}: голос Алисы
+          и звуки панели. Яндекс Музыку прошивка в наушники не отдаёт — колонка принимает наш
+          Bluetooth-поток за внешний плеер и останавливает музыку.
         </div>
         <button class="btn btn--soft btn--sm" :disabled="audioRouteBusy" @click="setAudioRoute(false)">
           <LoaderCircle v-if="audioRouteBusy" :size="14" class="spin" />
@@ -468,6 +469,7 @@ onMounted(() => {
               <li><Info :size="14" /><span>Ручной PIN не вводится: подтверждение происходит на телефоне или устройстве.</span></li>
               <li><Info :size="14" /><span>Выключение адаптера требует подтверждения.</span></li>
               <li><Info :size="14" /><span>Если наушники отключатся сами, звук вернётся в колонку в течение полуминуты.</span></li>
+              <li><Info :size="14" /><span>Яндекс Музыка в наушниках не заиграет: прошивка колонки глушит её, как только звук уходит по Bluetooth. Голос Алисы и звуки панели идут в наушники.</span></li>
             </ul>
             <div class="alert alert--warn mt-12">
               <AlertTriangle :size="15" />
