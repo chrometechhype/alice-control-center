@@ -6,7 +6,7 @@
 #
 # Installs into ~/.local/share/AliceControlCenter (override with ACC_INSTALL_DIR),
 # keeps the existing data folder, verifies SHA-256 and starts the panel in the background.
-# Set ACC_VERSION to a tag (for example v1.0.0-alpha.12) to install that exact version.
+# Set ACC_VERSION to a tag (for example v1.0.0-alpha.13) to install that exact version.
 
 set -eu
 
