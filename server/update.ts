@@ -8,6 +8,7 @@ import { dataDir, projectRoot } from './config.ts';
 import { AccError } from './errors.ts';
 import { eventLog } from './events.ts';
 import { shutdownForUpdate } from './lifecycle.ts';
+import { appSignals } from './signals.ts';
 
 export const UPDATE_REPO = process.env.ACC_GITHUB_REPO?.trim() || 'chrometechhype/alice-control-center';
 const API_BASE = 'https://api.github.com';
@@ -400,24 +401,45 @@ function withLiveVersion(info: CachedUpdate): UpdateInfo {
   };
 }
 
+/** The same release must not fire the `update.available` scenarios on every check. */
+let announcedVersion: string | null = null;
+
+function announceUpdate(info: Pick<UpdateInfo, 'updateAvailable' | 'latestVersion'>): void {
+  if (!info.updateAvailable || !info.latestVersion) return;
+  if (announcedVersion === info.latestVersion) return;
+  announcedVersion = info.latestVersion;
+  appSignals.emit('update.available', info.latestVersion);
+}
+
 export async function checkForUpdates(force = false): Promise<UpdateInfo> {
   const cached = readCache();
   const now = Date.now();
-  if (!force && cached?.checkedAt && now - cached.checkedAt < CACHE_TTL_MS) return withLiveVersion(cached);
-  if (force && cached?.checkedAt && now - cached.checkedAt < MIN_FORCE_INTERVAL_MS) return withLiveVersion(cached);
+  if (!force && cached?.checkedAt && now - cached.checkedAt < CACHE_TTL_MS) {
+    const info = withLiveVersion(cached);
+    announceUpdate(info);
+    return info;
+  }
+  if (force && cached?.checkedAt && now - cached.checkedAt < MIN_FORCE_INTERVAL_MS) {
+    const info = withLiveVersion(cached);
+    announceUpdate(info);
+    return info;
+  }
   if (inFlight) return inFlight;
   inFlight = (async () => {
     try {
       const release = await fetchLatestRelease();
       const info = await buildInfo(release);
       writeCache(info, info.assetName);
+      announceUpdate(info);
       return info;
     } catch (error) {
       if (cached) {
-        return {
+        const info = {
           ...withLiveVersion(cached),
           checkError: error instanceof Error ? error.message : 'Не удалось проверить обновления',
         } satisfies UpdateInfo;
+        announceUpdate(info);
+        return info;
       }
       const message = error instanceof Error ? error.message : 'Не удалось проверить обновления';
       return {

@@ -459,10 +459,50 @@ export interface AuthStatus {
   lanEnabled: boolean;
 }
 
+export const AUTOMATION_METRICS = ['cpuPct', 'memPct', 'tempC', 'dataFreePct', 'load1', 'wifiRssi'] as const;
+export type AutomationMetric = (typeof AUTOMATION_METRICS)[number];
+
 export interface AutomationCondition {
-  metric: 'cpuPct' | 'memPct' | 'tempC';
+  metric: AutomationMetric;
   op: '>' | '<';
   value: number;
+}
+
+export const SCENARIO_TRIGGERS = [
+  'manual',
+  'app.start',
+  'device.connect',
+  'device.disconnect',
+  'station.reboot',
+  'update.available',
+  'metrics',
+  'schedule',
+  'interval',
+  'volume',
+  'wifi',
+  'bluetooth',
+  'scenario.done',
+] as const;
+export type ScenarioTriggerType = (typeof SCENARIO_TRIGGERS)[number];
+
+export interface ScenarioTriggerConfig {
+  /** `metrics`: which reading to compare and against what. */
+  condition?: AutomationCondition;
+  /** `schedule`: local time `HH:MM` and ISO weekdays (1 = Monday … 7 = Sunday). */
+  time?: string;
+  weekdays?: number[];
+  /** `interval`: how often to repeat while the panel runs. */
+  everyMinutes?: number;
+  /** `volume`: fire when the level crosses the threshold in the chosen direction. */
+  volume?: { op: '>' | '<'; percent: number };
+  /** `wifi`: a named network appears, disappears, or the station switches to another one. */
+  wifi?: { event: 'connected' | 'disconnected' | 'changed'; ssid?: string };
+  /** `bluetooth`: a device whose MAC or name contains `match` connects or goes away. */
+  bluetooth?: { event: 'connected' | 'disconnected'; match?: string };
+  /** `scenario.done`: the scenario that has to finish first. */
+  scenarioId?: string;
+  /** `scenario.done`: skip the chain when the previous scenario failed. */
+  onSuccessOnly?: boolean;
 }
 
 /** Motions the ring renderer knows. The recipe is expanded into pixels on the panel, never stored. */
@@ -500,7 +540,10 @@ export interface AutomationScenario {
   id: string;
   name: string;
   enabled: boolean;
-  trigger: 'device.connect' | 'device.disconnect' | 'metrics' | 'app.start';
+  trigger: ScenarioTriggerType;
+  /** Parameters of the chosen trigger; absent for triggers that take none. */
+  triggerConfig?: ScenarioTriggerConfig;
+  /** Kept for scenarios written before `triggerConfig`; always mirrors `triggerConfig.condition`. */
   condition?: AutomationCondition;
   cooldownSec: number;
   steps: ScenarioStep[];

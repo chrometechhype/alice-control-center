@@ -26,22 +26,28 @@ import {
 } from '@lucide/vue';
 import type {
   AutomationCondition,
+  AutomationMetric,
   AutomationScenario,
   SceneEffect,
   ScenarioStep,
   ScenarioStepKind,
+  ScenarioTriggerConfig,
+  ScenarioTriggerType,
   SoundFile,
 } from '@shared/types';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import Modal from '@/components/Modal.vue';
+import OfflineState from '@/components/OfflineState.vue';
 import { api, errorMessage } from '@/lib/api';
 import { formatRelative, pluralRu } from '@/lib/format';
 import { everConnected, isConnected, pushToast } from '@/lib/store';
 
 interface TriggerInfo {
-  value: AutomationScenario['trigger'];
+  value: ScenarioTriggerType;
   label: string;
+  group: string;
+  hint: string;
 }
 
 /** Flat so every field can be v-model'd; turned into a real step on save. */
@@ -59,16 +65,58 @@ interface StepDraft {
 
 const MAX_STEPS = 32;
 
+/** Every trigger's parameters live side by side, so switching the trigger keeps what was typed. */
 interface FormState {
   name: string;
   enabled: boolean;
-  trigger: AutomationScenario['trigger'];
-  metric: AutomationCondition['metric'];
-  op: AutomationCondition['op'];
-  value: number;
+  trigger: ScenarioTriggerType;
   cooldownSec: number;
   steps: StepDraft[];
+  metric: AutomationMetric;
+  op: AutomationCondition['op'];
+  value: number;
+  time: string;
+  weekdays: number[];
+  everyMinutes: number;
+  volumeOp: AutomationCondition['op'];
+  volumePercent: number;
+  wifiEvent: NonNullable<ScenarioTriggerConfig['wifi']>['event'];
+  wifiSsid: string;
+  bluetoothEvent: NonNullable<ScenarioTriggerConfig['bluetooth']>['event'];
+  bluetoothMatch: string;
+  chainId: string;
+  chainSuccessOnly: boolean;
 }
+
+const WEEKDAYS: Array<{ value: number; label: string }> = [
+  { value: 1, label: 'Пн' },
+  { value: 2, label: 'Вт' },
+  { value: 3, label: 'Ср' },
+  { value: 4, label: 'Чт' },
+  { value: 5, label: 'Пт' },
+  { value: 6, label: 'Сб' },
+  { value: 7, label: 'Вс' },
+];
+
+const METRICS: Array<{ value: AutomationMetric; label: string; unit: string }> = [
+  { value: 'cpuPct', label: 'CPU', unit: '%' },
+  { value: 'memPct', label: 'Память', unit: '%' },
+  { value: 'tempC', label: 'Температура', unit: '°C' },
+  { value: 'dataFreePct', label: 'Свободно в /data', unit: '%' },
+  { value: 'load1', label: 'Load average', unit: '' },
+  { value: 'wifiRssi', label: 'Уровень Wi-Fi', unit: 'дБм' },
+];
+
+const WIFI_EVENTS: Array<{ value: NonNullable<ScenarioTriggerConfig['wifi']>['event']; label: string }> = [
+  { value: 'connected', label: 'подключилась к сети' },
+  { value: 'disconnected', label: 'потеряла сеть' },
+  { value: 'changed', label: 'переключилась на другую сеть' },
+];
+
+const BLUETOOTH_EVENTS: Array<{ value: NonNullable<ScenarioTriggerConfig['bluetooth']>['event']; label: string }> = [
+  { value: 'connected', label: 'устройство подключилось' },
+  { value: 'disconnected', label: 'устройство отключилось' },
+];
 
 const EFFECTS: Array<{ value: SceneEffect; label: string }> = [
   { value: 'pulse', label: 'мигает целиком' },
@@ -119,11 +167,22 @@ const form = reactive<FormState>({
   name: '',
   enabled: true,
   trigger: 'device.connect',
+  cooldownSec: 60,
+  steps: [],
   metric: 'cpuPct',
   op: '>',
   value: 80,
-  cooldownSec: 60,
-  steps: [],
+  time: '08:00',
+  weekdays: [1, 2, 3, 4, 5],
+  everyMinutes: 60,
+  volumeOp: '>',
+  volumePercent: 80,
+  wifiEvent: 'disconnected',
+  wifiSsid: '',
+  bluetoothEvent: 'connected',
+  bluetoothMatch: '',
+  chainId: '',
+  chainSuccessOnly: false,
 });
 
 const enabledCount = computed(() => scenarios.value.filter((scenario) => scenario.enabled).length);
@@ -138,6 +197,31 @@ const triggerLabels = computed<Record<string, string>>(() => {
   for (const item of triggers.value) result[item.value] = item.label;
   return result;
 });
+
+/** The dropdown is long, so the options are grouped: Панель, Станция, Показатели, Сеть, Время… */
+const triggerGroups = computed(() => {
+  const groups = new Map<string, TriggerInfo[]>();
+  for (const item of triggers.value) {
+    const list = groups.get(item.group);
+    if (list) list.push(item);
+    else groups.set(item.group, [item]);
+  }
+  return [...groups.entries()].map(([group, items]) => ({ group, items }));
+});
+
+const activeTriggerHint = computed(
+  () => triggers.value.find((item) => item.value === form.trigger)?.hint ?? '',
+);
+
+/** A scenario can only chain to a scenario that already exists and is not itself. */
+const chainOptions = computed(() =>
+  scenarios.value.filter((scenario) => scenario.id !== editingId.value),
+);
+
+function toggleWeekday(day: number, checked: boolean): void {
+  const rest = form.weekdays.filter((item) => item !== day);
+  form.weekdays = checked ? [...rest, day].sort((left, right) => left - right) : rest;
+}
 
 function emptyStep(kind: ScenarioStepKind): StepDraft {
   return {
@@ -237,11 +321,64 @@ function scenarioSummary(scenario: AutomationScenario): string {
   );
 }
 
-function conditionLabel(scenario: AutomationScenario): string {
-  const condition = scenario.condition;
+function metricLabel(metric: AutomationMetric): string {
+  return METRICS.find((item) => item.value === metric)?.label ?? metric;
+}
+
+function metricUnit(metric: AutomationMetric): string {
+  return METRICS.find((item) => item.value === metric)?.unit ?? '';
+}
+
+function conditionText(condition: AutomationCondition | undefined): string {
   if (!condition) return 'без условия';
-  const metric = condition.metric === 'cpuPct' ? 'CPU' : condition.metric === 'memPct' ? 'RAM' : 'Температура';
-  return `${metric} ${condition.op} ${condition.value}`;
+  return `${metricLabel(condition.metric)} ${condition.op} ${condition.value}${metricUnit(condition.metric)}`;
+}
+
+function weekdaysText(days: number[] | undefined): string {
+  if (!days?.length || days.length === 7) return 'каждый день';
+  return days
+    .slice()
+    .sort((left, right) => left - right)
+    .map((day) => WEEKDAYS.find((item) => item.value === day)?.label ?? day)
+    .join(', ');
+}
+
+/** What makes this scenario fire, in one short line under its name. */
+function triggerDetail(scenario: AutomationScenario): string {
+  const config = scenario.triggerConfig;
+  switch (scenario.trigger) {
+    case 'metrics':
+      return conditionText(config?.condition ?? scenario.condition);
+    case 'schedule':
+      return `${config?.time ?? '—'} · ${weekdaysText(config?.weekdays)}`;
+    case 'interval':
+      return `каждые ${config?.everyMinutes ?? '—'} мин`;
+    case 'volume':
+      return config?.volume
+        ? `громкость ${config.volume.op === '>' ? 'выше' : 'ниже'} ${config.volume.percent}%`
+        : 'без порога';
+    case 'wifi': {
+      if (!config?.wifi) return 'без события';
+      const event = WIFI_EVENTS.find((item) => item.value === config.wifi?.event)?.label ?? config.wifi.event;
+      return config.wifi.ssid ? `${event}: ${config.wifi.ssid}` : event;
+    }
+    case 'bluetooth': {
+      if (!config?.bluetooth) return 'без события';
+      const event =
+        BLUETOOTH_EVENTS.find((item) => item.value === config.bluetooth?.event)?.label ?? config.bluetooth.event;
+      return config.bluetooth.match ? `${event}: ${config.bluetooth.match}` : event;
+    }
+    case 'scenario.done': {
+      const name = scenarios.value.find((item) => item.id === config?.scenarioId)?.name;
+      return name ? `после «${name}»` : 'сценарий не выбран';
+    }
+    default:
+      return triggers.value.find((item) => item.value === scenario.trigger)?.hint ?? '';
+  }
+}
+
+function triggerTitle(scenario: AutomationScenario): string {
+  return triggers.value.find((item) => item.value === scenario.trigger)?.hint ?? '';
 }
 
 function scenarioIcon(scenario: AutomationScenario) {
@@ -282,11 +419,22 @@ function resetForm(): void {
     name: '',
     enabled: true,
     trigger: 'device.connect',
+    cooldownSec: 60,
+    steps: [emptyStep('led')],
     metric: 'cpuPct',
     op: '>',
     value: 80,
-    cooldownSec: 60,
-    steps: [emptyStep('led')],
+    time: '08:00',
+    weekdays: [1, 2, 3, 4, 5],
+    everyMinutes: 60,
+    volumeOp: '>',
+    volumePercent: 80,
+    wifiEvent: 'disconnected',
+    wifiSsid: '',
+    bluetoothEvent: 'connected',
+    bluetoothMatch: '',
+    chainId: '',
+    chainSuccessOnly: false,
   } satisfies FormState);
   formError.value = '';
 }
@@ -299,15 +447,28 @@ function openCreate(): void {
 
 function openEdit(scenario: AutomationScenario): void {
   editingId.value = scenario.id;
+  const config = scenario.triggerConfig ?? {};
+  const condition = config.condition ?? scenario.condition;
   Object.assign(form, {
     name: scenario.name,
     enabled: scenario.enabled,
     trigger: scenario.trigger,
-    metric: scenario.condition?.metric ?? 'cpuPct',
-    op: scenario.condition?.op ?? '>',
-    value: scenario.condition?.value ?? 80,
     cooldownSec: scenario.cooldownSec,
     steps: scenario.steps.map(stepToDraft),
+    metric: condition?.metric ?? 'cpuPct',
+    op: condition?.op ?? '>',
+    value: condition?.value ?? 80,
+    time: config.time ?? '08:00',
+    weekdays: config.weekdays?.length ? [...config.weekdays] : [1, 2, 3, 4, 5],
+    everyMinutes: config.everyMinutes ?? 60,
+    volumeOp: config.volume?.op ?? '>',
+    volumePercent: config.volume?.percent ?? 80,
+    wifiEvent: config.wifi?.event ?? 'disconnected',
+    wifiSsid: config.wifi?.ssid ?? '',
+    bluetoothEvent: config.bluetooth?.event ?? 'connected',
+    bluetoothMatch: config.bluetooth?.match ?? '',
+    chainId: config.scenarioId ?? '',
+    chainSuccessOnly: config.onSuccessOnly ?? false,
   } satisfies FormState);
   if (scenario.steps.some((step) => step.kind === 'sound')) void ensureSounds();
   formError.value = '';
@@ -369,9 +530,57 @@ async function generate(): Promise<void> {
   }
 }
 
+/** Turns the flat form into the config the server validates; empty triggers send nothing. */
+function buildTriggerConfig(): ScenarioTriggerConfig | undefined {
+  switch (form.trigger) {
+    case 'metrics':
+      return { condition: { metric: form.metric, op: form.op, value: Number(form.value) } };
+    case 'schedule':
+      return { time: form.time, weekdays: [...form.weekdays].sort((left, right) => left - right) };
+    case 'interval':
+      return { everyMinutes: Math.round(Number(form.everyMinutes) || 60) };
+    case 'volume':
+      return { volume: { op: form.volumeOp, percent: Math.round(Number(form.volumePercent) || 0) } };
+    case 'wifi':
+      return { wifi: { event: form.wifiEvent, ssid: form.wifiSsid.trim() || undefined } };
+    case 'bluetooth':
+      return { bluetooth: { event: form.bluetoothEvent, match: form.bluetoothMatch.trim() || undefined } };
+    case 'scenario.done':
+      return { scenarioId: form.chainId, onSuccessOnly: form.chainSuccessOnly };
+    default:
+      return undefined;
+  }
+}
+
+function validateTriggerForm(): string | null {
+  switch (form.trigger) {
+    case 'metrics':
+      if (!Number.isFinite(Number(form.value))) return 'Укажите числовой порог условия';
+      return null;
+    case 'schedule':
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(form.time)) return 'Время расписания — ЧЧ:ММ, например 08:30';
+      if (!form.weekdays.length) return 'Выберите хотя бы один день недели';
+      return null;
+    case 'interval':
+      if (!Number.isFinite(Number(form.everyMinutes)) || Number(form.everyMinutes) < 1) {
+        return 'Интервал — целое число минут, не меньше минуты';
+      }
+      return null;
+    case 'volume':
+      if (!Number.isFinite(Number(form.volumePercent))) return 'Укажите порог громкости в процентах';
+      return null;
+    case 'scenario.done':
+      if (!form.chainId) return 'Выберите сценарий, после которого запускаться';
+      return null;
+    default:
+      return null;
+  }
+}
+
 function validateForm(): string | null {
   if (!form.name.trim()) return 'Укажите название сценария';
-  if (form.trigger === 'metrics' && !Number.isFinite(Number(form.value))) return 'Укажите числовой порог условия';
+  const triggerProblem = validateTriggerForm();
+  if (triggerProblem) return triggerProblem;
   if (!form.steps.length) return 'Добавьте хотя бы один шаг';
   for (const [index, step] of form.steps.entries()) {
     if (step.parallelWith != null && (step.parallelWith < 1 || step.parallelWith > index)) {
@@ -404,10 +613,7 @@ async function save(): Promise<void> {
     name: form.name.trim(),
     enabled: form.enabled,
     trigger: form.trigger,
-    condition:
-      form.trigger === 'metrics'
-        ? { metric: form.metric, op: form.op, value: Number(form.value) }
-        : undefined,
+    triggerConfig: buildTriggerConfig(),
     cooldownSec: Math.max(5, Number(form.cooldownSec) || 60),
     steps: form.steps.map((step, index) => draftToStep(step, index)),
   };
@@ -434,7 +640,8 @@ async function toggle(scenario: AutomationScenario): Promise<void> {
       name: scenario.name,
       enabled: !scenario.enabled,
       trigger: scenario.trigger,
-      condition: scenario.trigger === 'metrics' ? scenario.condition : undefined,
+      triggerConfig: scenario.triggerConfig,
+      condition: scenario.condition,
       cooldownSec: scenario.cooldownSec,
       steps: scenario.steps,
     });
@@ -490,7 +697,9 @@ onMounted(() => {
         <h1>Automation Studio</h1>
         <p>
           Сценарий — это несколько шагов подряд: кольцо мигает, колонка говорит, в журнал падает
-          запись. Запускаются только по реальным событиям — подключение, отключение, метрики, старт ACC.
+          запись. Триггеров тринадцать: подключение и отключение станции, перезагрузка, обновление,
+          пороги метрик, громкость, Wi-Fi, Bluetooth, расписание, интервал и цепочка из другого
+          сценария.
         </p>
       </div>
       <div class="page-head__actions">
@@ -505,11 +714,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-if="!everConnected" class="card">
-      <EmptyState title="Колонка не отвечает" text="Панель ещё не связалась с колонкой в этой сессии. Automation Studio управляет сценариями на backend и реагирует на события колонки. Откройте «Мастер подключения» или подождите — панель сама пробует снова.">
-        <template #icon><Workflow :size="22" /></template>
-      </EmptyState>
-    </div>
+    <OfflineState v-if="!everConnected" feature="Automation Studio управляет сценариями на backend и реагирует на события колонки." />
 
     <template v-else>
       <div v-if="error" class="alert alert--error">
@@ -573,8 +778,10 @@ onMounted(() => {
             <div class="list-main">
               <div class="list-title truncate">{{ scenario.name }}</div>
               <div class="list-meta">
-                <span class="pill pill--muted">{{ triggerLabels[scenario.trigger] || scenario.trigger }}</span>
-                <span v-if="scenario.trigger === 'metrics'" class="pill pill--muted">{{ conditionLabel(scenario) }}</span>
+                <span class="pill pill--muted" :title="triggerTitle(scenario)">{{ triggerLabels[scenario.trigger] || scenario.trigger }}</span>
+                <span class="truncate">{{ triggerDetail(scenario) }}</span>
+              </div>
+              <div class="list-meta">
                 <span class="truncate">{{ scenarioSummary(scenario) }}</span>
               </div>
               <div class="list-meta">
@@ -653,7 +860,9 @@ onMounted(() => {
           <div class="field">
             <label for="scenario-trigger">Триггер</label>
             <select id="scenario-trigger" v-model="form.trigger" class="select">
-              <option v-for="item in triggers" :key="item.value" :value="item.value">{{ item.label }}</option>
+              <optgroup v-for="group in triggerGroups" :key="group.group" :label="group.group">
+                <option v-for="item in group.items" :key="item.value" :value="item.value">{{ item.label }}</option>
+              </optgroup>
             </select>
           </div>
           <div class="field">
@@ -661,24 +870,112 @@ onMounted(() => {
             <input id="scenario-cooldown" v-model.number="form.cooldownSec" class="input" type="number" min="5" max="86400" />
           </div>
 
+          <div v-if="activeTriggerHint" class="span-2 field-hint" style="margin: -4px 0 0">
+            {{ activeTriggerHint }}
+          </div>
+
           <template v-if="form.trigger === 'metrics'">
             <div class="field">
               <label for="scenario-metric">Метрика</label>
               <select id="scenario-metric" v-model="form.metric" class="select">
-                <option value="cpuPct">CPU, %</option>
-                <option value="memPct">Память, %</option>
-                <option value="tempC">Температура, °C</option>
+                <option v-for="item in METRICS" :key="item.value" :value="item.value">
+                  {{ item.label }}{{ item.unit ? `, ${item.unit}` : '' }}
+                </option>
               </select>
             </div>
             <div class="field">
               <label>Условие</label>
               <div class="row" style="gap: 8px">
-                <select v-model="form.op" class="select" style="width: 96px">
+                <select v-model="form.op" class="select" style="width: 96px" aria-label="Сравнение">
                   <option value=">">больше</option>
                   <option value="<">меньше</option>
                 </select>
-                <input v-model.number="form.value" class="input" type="number" min="-50" max="200" step="1" />
+                <input v-model.number="form.value" class="input" type="number" min="-500" max="500" step="1" aria-label="Порог" />
               </div>
+            </div>
+          </template>
+
+          <template v-else-if="form.trigger === 'schedule'">
+            <div class="field">
+              <label for="scenario-time">Время</label>
+              <input id="scenario-time" v-model="form.time" class="input" type="time" />
+            </div>
+            <div class="field">
+              <label>Дни недели</label>
+              <div class="row" style="gap: 4px; flex-wrap: wrap">
+                <label v-for="day in WEEKDAYS" :key="day.value" class="check" style="gap: 4px">
+                  <input
+                    type="checkbox"
+                    :checked="form.weekdays.includes(day.value)"
+                    @change="toggleWeekday(day.value, ($event.target as HTMLInputElement).checked)"
+                  />
+                  <span>{{ day.label }}</span>
+                </label>
+              </div>
+            </div>
+          </template>
+
+          <template v-else-if="form.trigger === 'interval'">
+            <div class="field">
+              <label for="scenario-interval">Повторять каждые, минут</label>
+              <input id="scenario-interval" v-model.number="form.everyMinutes" class="input" type="number" min="1" max="1440" />
+            </div>
+          </template>
+
+          <template v-else-if="form.trigger === 'volume'">
+            <div class="field">
+              <label for="scenario-volume">Громкость пересекает</label>
+              <div class="row" style="gap: 8px">
+                <select v-model="form.volumeOp" class="select" style="width: 130px" aria-label="Направление">
+                  <option value=">">вверх через</option>
+                  <option value="<">вниз через</option>
+                </select>
+                <input id="scenario-volume" v-model.number="form.volumePercent" class="input" type="number" min="0" max="100" aria-label="Порог громкости, %" />
+                <span class="muted">%</span>
+              </div>
+            </div>
+          </template>
+
+          <template v-else-if="form.trigger === 'wifi'">
+            <div class="field">
+              <label for="scenario-wifi-event">Событие</label>
+              <select id="scenario-wifi-event" v-model="form.wifiEvent" class="select">
+                <option v-for="item in WIFI_EVENTS" :key="item.value" :value="item.value">{{ item.label }}</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="scenario-wifi-ssid">SSID (пусто — любая сеть)</label>
+              <input id="scenario-wifi-ssid" v-model="form.wifiSsid" class="input" maxlength="64" placeholder="Например: Home" />
+            </div>
+          </template>
+
+          <template v-else-if="form.trigger === 'bluetooth'">
+            <div class="field">
+              <label for="scenario-bt-event">Событие</label>
+              <select id="scenario-bt-event" v-model="form.bluetoothEvent" class="select">
+                <option v-for="item in BLUETOOTH_EVENTS" :key="item.value" :value="item.value">{{ item.label }}</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="scenario-bt-match">Имя или MAC (пусто — любое устройство)</label>
+              <input id="scenario-bt-match" v-model="form.bluetoothMatch" class="input" maxlength="64" placeholder="Например: iPhone" />
+            </div>
+          </template>
+
+          <template v-else-if="form.trigger === 'scenario.done'">
+            <div class="field">
+              <label for="scenario-chain">Запускаться после</label>
+              <select id="scenario-chain" v-model="form.chainId" class="select">
+                <option value="">Выберите сценарий</option>
+                <option v-for="item in chainOptions" :key="item.id" :value="item.id">{{ item.name }}</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Условие цепочки</label>
+              <label class="check" style="gap: 6px">
+                <input v-model="form.chainSuccessOnly" type="checkbox" />
+                <span>Только если предыдущий завершился без ошибки</span>
+              </label>
             </div>
           </template>
         </div>
