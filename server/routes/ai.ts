@@ -233,6 +233,7 @@ aiRouter.post(
     });
     sendOk(res, {
       name: scenario.name,
+      trigger: scenario.trigger,
       steps: scenario.steps,
       provider: providerLabel(config),
       model: config.model,

@@ -79,6 +79,38 @@ describe('buildScenario', () => {
     expect(() => buildScenario('{"name":"Привет","steps":[{"kind":"say","text":"При', 'скажи привет')).toThrowError(AccError);
   });
 
+  it('keeps the "start together" link so a ring show and its words land at once', () => {
+    const built = buildScenario(
+      json({
+        name: 'Сигнал',
+        trigger: 'device.connect',
+        steps: [
+          { kind: 'led', effect: 'pulse', colors: ['#ff2d2d'], fps: 24, seconds: 4 },
+          { kind: 'say', text: 'Ошибка.', parallelWith: 1 },
+        ],
+      }),
+      'мигает красным и говорит ошибка',
+    );
+    expect(built?.trigger).toBe('device.connect');
+    expect(built?.steps[1]?.parallelWith).toBe(1);
+  });
+
+  it('drops a link that points at a step which does not exist yet', () => {
+    const built = buildScenario(
+      json({
+        name: 'Один',
+        steps: [{ kind: 'led', effect: 'pulse', colors: ['#ff2d2d'], fps: 24, seconds: 4, parallelWith: 4 }],
+      }),
+      'мигает',
+    );
+    expect(built?.steps[0]?.parallelWith).toBeUndefined();
+  });
+
+  it('says nothing about the trigger when the model named no moment', () => {
+    const built = buildScenario(json({ name: 'Просто свет', steps: [{ kind: 'notify', text: 'ок' }] }), 'запиши в журнал');
+    expect(built?.trigger).toBeUndefined();
+  });
+
   it('describes a step the way the journal shows it', () => {
     expect(describeStep({ kind: 'say', text: 'Привет, хозяин' })).toBe('Сказать «Привет, хозяин»');
     expect(describeStep({ kind: 'pause', seconds: 2 })).toBe('Пауза 2 с');

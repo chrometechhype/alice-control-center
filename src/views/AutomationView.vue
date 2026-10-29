@@ -480,7 +480,15 @@ function addStep(kind: ScenarioStepKind): void {
     formError.value = `В сценарии не больше ${MAX_STEPS} шагов`;
     return;
   }
-  form.steps.push(emptyStep(kind));
+  const step = emptyStep(kind);
+  const previous = form.steps[form.steps.length - 1];
+  // A ring show and the sound that belongs to it are one signal: the sound used to wait out the
+  // whole show. New audio steps start together with a preceding LED step — the row shows the link
+  // and it can be cleared to «—» when the sound really must come after.
+  if (previous?.kind === 'led' && (kind === 'sound' || kind === 'say')) {
+    step.parallelWith = form.steps.length;
+  }
+  form.steps.push(step);
   if (kind === 'sound') void ensureSounds();
 }
 
@@ -519,9 +527,17 @@ async function generate(): Promise<void> {
   generating.value = true;
   formError.value = '';
   try {
-    const result = await api.post<{ name: string; steps: ScenarioStep[] }>('/ai/scenario', { prompt });
+    const result = await api.post<{ name: string; trigger?: ScenarioTriggerType; steps: ScenarioStep[] }>(
+      '/ai/scenario',
+      { prompt },
+    );
     if (!form.name.trim()) form.name = result.name;
     form.steps = result.steps.map(stepToDraft);
+    fixParallelLinks();
+    // The model may name the moment («когда колонка подключится»); without one the editor keeps its own trigger.
+    if (result.trigger && triggers.value.some((item) => item.value === result.trigger)) {
+      form.trigger = result.trigger;
+    }
     pushToast('ok', `ИИ собрал сценарий: ${pluralRu(result.steps.length, ['шаг', 'шага', 'шагов'])}`);
   } catch (caught) {
     formError.value = errorMessage(caught);
@@ -686,7 +702,8 @@ async function remove(): Promise<void> {
 }
 
 onMounted(() => {
-  if (isConnected.value) void load();
+  // Scenarios live on the panel, so the list must be readable while the station is away.
+  void load();
 });
 </script>
 

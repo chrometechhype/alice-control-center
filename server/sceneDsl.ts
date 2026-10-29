@@ -63,7 +63,8 @@ export function sceneSystemPrompt(zones: number): string {
     '- "name" is up to 24 characters in Russian, without quotes inside.',
     '- Pick fps and frames so the motion is smooth: slow colour travel 6..14 fps, flashing 20..40 fps.',
     '- The first frame must already be visible; the animation must loop back into it.',
-    'Answer with JSON only. Do not explain anything. Your very first character must be "{" and your very last must be "}".',
+    'Before answering, check silently: one object only, every key from the shape above and nothing else, numbers not strings, no trailing commas, no empty colours.',
+    'Answer with JSON only. Do not explain anything. No markdown fences, no text before or after. Your very first character must be "{" and your very last must be "}".',
   ].join('\n');
 }
 
