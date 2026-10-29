@@ -13,8 +13,8 @@ function open(address: string): FakeSocket {
 
 describe('viewers', () => {
   it('counts two tabs on one device once', () => {
-    const first = open('192.168.100.5');
-    const second = open('192.168.100.5');
+    const first = open('192.168.1.42');
+    const second = open('192.168.1.42');
     expect(viewerCount()).toBe(1);
     first.emit('close');
     second.emit('close');
@@ -22,8 +22,8 @@ describe('viewers', () => {
   });
 
   it('counts two devices separately', () => {
-    const phone = open('192.168.100.5');
-    const laptop = open('192.168.100.9');
+    const phone = open('192.168.1.42');
+    const laptop = open('192.168.1.100');
     expect(viewerCount()).toBe(2);
     laptop.emit('close');
     expect(viewerCount()).toBe(1);
@@ -32,8 +32,8 @@ describe('viewers', () => {
   });
 
   it('treats IPv6 forms of the same address as one device', () => {
-    const v4 = open('192.168.100.5');
-    const mapped = open('::ffff:192.168.100.5');
+    const v4 = open('192.168.1.42');
+    const mapped = open('::ffff:192.168.1.42');
     expect(viewerCount()).toBe(1);
     v4.emit('close');
     mapped.emit('close');
@@ -49,7 +49,7 @@ describe('viewers', () => {
   });
 
   it('drops a connection that errored', () => {
-    const socket = open('192.168.100.5');
+    const socket = open('192.168.1.42');
     socket.emit('error', new Error('reset'));
     expect(viewerCount()).toBe(0);
   });
