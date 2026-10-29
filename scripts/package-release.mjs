@@ -33,6 +33,7 @@ const files = [
   'start.sh',
   'full-debug.sh',
   'install.ps1',
+  'install.sh',
 ];
 const directories = ['dist', 'src', 'server', 'shared', 'public', 'tests', 'docs'];
 
@@ -66,7 +67,9 @@ for (const script of ['apply-update.mjs', 'acc-common.ps1', 'acc-start.ps1', 'ac
 }
 
 if (process.platform !== 'win32') {
-  fs.chmodSync(path.join(releaseRoot, 'start.sh'), 0o755);
+  for (const script of ['start.sh', 'full-debug.sh', 'install.sh']) {
+    fs.chmodSync(path.join(releaseRoot, script), 0o755);
+  }
 }
 
 const allowedAddresses = new Set([

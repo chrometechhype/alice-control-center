@@ -109,6 +109,32 @@ $env:ACC_VERSION = 'v1.0.0-alpha.12'
 irm https://raw.githubusercontent.com/chrometechhype/alice-control-center/main/install.ps1 | iex
 ```
 
+### Установка одной командой (Linux и macOS)
+
+Нужны только Node.js 20+ и `curl`, остальное установщик сделает сам:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/chrometechhype/alice-control-center/main/install.sh | sh
+```
+
+Установщик:
+
+- проверяет Node.js 20+ и `npm`, без них останавливается с подсказкой;
+- скачивает последний релиз GitHub и сверяет SHA-256 — без совпадения контрольной суммы
+  установка отменяется;
+- ставит панель в `~/.local/share/AliceControlCenter`, сохраняя `data/` при обновлении;
+- запускает панель в фоне на `http://127.0.0.1:8722`, журнал — `acc.log` в папке установки.
+
+Другая папка или конкретная версия:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/chrometechhype/alice-control-center/main/install.sh | ACC_INSTALL_DIR="$HOME/Apps/AliceControlCenter" sh
+curl -fsSL https://raw.githubusercontent.com/chrometechhype/alice-control-center/main/install.sh | ACC_VERSION=v1.0.0-alpha.12 sh
+```
+
+Значка в трее на Linux и macOS пока нет: панель запускает
+`~/.local/share/AliceControlCenter/acc-start.sh`, останавливает `kill $(cat ~/.local/share/AliceControlCenter/acc.pid)`.
+
 ### Значок в трее
 
 Ярлык запускает панель без окна консоли и показывает значок в области уведомлений:
