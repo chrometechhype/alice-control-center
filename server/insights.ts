@@ -1,6 +1,6 @@
 import type { RepoInsights } from '../shared/types.ts';
 import { AccError } from './errors.ts';
-import { UPDATE_REPO } from './update.ts';
+import { compareVersions, UPDATE_REPO } from './update.ts';
 
 const API_BASE = 'https://api.github.com';
 const CACHE_TTL_MS = 10 * 60_000;
@@ -62,18 +62,28 @@ function versionOf(tag: string): string {
   return tag.replace(/^v/, '');
 }
 
+/**
+ * GitHub lists releases in tag order, so `v1.0.0-alpha.10` arrives after `alpha.6` and the first
+ * element is not the newest. The overview needs SemVer order, where `.10` beats `.9`.
+ */
+export function newestFirst<T extends { version: string }>(list: T[]): T[] {
+  return [...list].sort((a, b) => compareVersions(b.version, a.version));
+}
+
 async function collect(): Promise<RepoInsights> {
   const [repo, releases] = await Promise.all([
     github<GithubRepo>(`${API_BASE}/repos/${UPDATE_REPO}`),
     github<GithubRelease[]>(`${API_BASE}/repos/${UPDATE_REPO}/releases?per_page=100`),
   ]);
-  const list = releases
-    .filter((release) => !release.draft)
-    .map((release) => ({
-      version: versionOf(release.tag_name),
-      downloads: downloadsOf(release),
-      publishedAt: release.published_at,
-    }));
+  const list = newestFirst(
+    releases
+      .filter((release) => !release.draft)
+      .map((release) => ({
+        version: versionOf(release.tag_name),
+        downloads: downloadsOf(release),
+        publishedAt: release.published_at,
+      })),
+  );
   return {
     repo: UPDATE_REPO,
     totalDownloads: list.reduce((sum, release) => sum + release.downloads, 0),
