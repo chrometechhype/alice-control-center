@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   AlertTriangle,
   Check,
@@ -82,8 +82,40 @@ const ledKind = computed(() => String(ledCap.value?.details?.kind ?? 'sysfs'));
 const zones = computed(() => status.value?.zones ?? []);
 const presets = computed(() => status.value?.presets ?? []);
 const zoneCount = computed(() => zones.value.length);
-const powerOn = computed(() => status.value?.power.on !== false);
+/**
+ * «Не прочитано» is not «включено»: with no status the panel used to claim the ring was on, show
+ * «Выключить» and offer to turn off a ring that might already be dark.
+ */
+const powerState = computed<'on' | 'off' | 'unknown'>(() => {
+  const value = status.value?.power.on;
+  if (value === true) return 'on';
+  if (value === false) return 'off';
+  return 'unknown';
+});
+const powerOn = computed(() => powerState.value === 'on');
+const powerLabel = computed(() =>
+  powerState.value === 'on' ? 'Выключить' : powerState.value === 'off' ? 'Включить' : 'Питание',
+);
+const pending = ref<'' | 'apply' | 'power' | 'reset' | 'restore' | 'animation'>('');
 const savedColors = computed(() => status.value?.power.colors ?? null);
+
+const pendingAction = computed(() => {
+  const labels: Record<string, string> = {
+    apply: 'Применяем цвета',
+    power: powerOn.value ? 'Выключаем кольцо' : 'Включаем кольцо',
+    reset: 'Возвращаем кольцо к цвету до эффекта',
+    restore: 'Отдаём кольцо штатной индикации',
+    animation: 'Запускаем анимацию',
+  };
+  return labels[pending.value] ?? '';
+});
+
+/** A command really does wait up to 20 s for a dropped link — say so instead of looking frozen. */
+const pendingHint = computed(() =>
+  isConnected.value
+    ? `${pendingAction.value}…`
+    : `${pendingAction.value}: колонка не на связи, панель ждёт её до 20 секунд…`,
+);
 
 function stopLocalAnimationTimer(): void {
   if (animationTimer) {
@@ -157,7 +189,7 @@ function presetCss(preset: LedPreset, index: number): string {
   return rgbCss(preset.frames[0]?.[index] ?? [0, 0, 0]);
 }
 
-async function load(showToast = false): Promise<void> {
+async function load(showToast = false, quiet = false): Promise<void> {
   if (!isConnected.value || !ledAvailable.value) return;
   loading.value = true;
   error.value = '';
@@ -171,7 +203,7 @@ async function load(showToast = false): Promise<void> {
     if (result.animation.running) markAnimation(2500);
     if (showToast) pushToast('ok', 'Состояние LED обновлено');
   } catch (caught) {
-    error.value = errorMessage(caught);
+    if (!quiet) error.value = errorMessage(caught);
   } finally {
     loading.value = false;
   }
@@ -180,6 +212,7 @@ async function load(showToast = false): Promise<void> {
 async function applySelected(): Promise<void> {
   if (!zoneCount.value) return;
   busy.value = true;
+  pending.value = 'apply';
   error.value = '';
   try {
     const result = await api.post<{ warning?: string }>('/led/apply', {
@@ -199,35 +232,53 @@ async function applySelected(): Promise<void> {
     pushToast('error', error.value);
   } finally {
     busy.value = false;
+    pending.value = '';
   }
 }
 
 async function togglePower(): Promise<void> {
   busy.value = true;
+  pending.value = 'power';
   error.value = '';
+  const wasOn = powerState.value === 'on';
   try {
-    if (powerOn.value) {
+    if (wasOn) {
       await api.post('/led/off');
       stopLocalAnimationTimer();
       animationRunning.value = false;
+      setPowerOptimistic('off');
       pushToast('info', 'LED-кольцо выключено');
     } else {
       const result = await api.post<{ message?: string; warning?: string }>('/led/on');
       pushToast(result.warning ? 'error' : 'ok', result.warning ?? result.message ?? 'LED-кольцо включено');
-      if (!result.warning) await load();
+      if (!result.warning) setPowerOptimistic('on');
     }
-    await load();
+    void load(false, true);
   } catch (caught) {
     error.value = errorMessage(caught);
     pushToast('error', error.value);
   } finally {
     busy.value = false;
+    pending.value = '';
   }
+}
+
+/**
+ * The button must flip the moment the station confirms the write: re-reading status can fail on the
+ * next SSH blip, and a label that still says «Выключить» after a finished turn-off is a lie.
+ *
+ * The re-read is deliberately not awaited: it waits up to 20 s for a dropped link, and the power
+ * state is already known, so the buttons must not stay frozen for a second wait.
+ */
+function setPowerOptimistic(next: 'on' | 'off'): void {
+  if (!status.value) return;
+  status.value = { ...status.value, power: { ...status.value.power, on: next === 'on' } };
 }
 
 /** An effect that has ended must not stay frozen on its last frame. */
 async function resetEffect(): Promise<void> {
   busy.value = true;
+  pending.value = 'reset';
   error.value = '';
   try {
     const result = await api.post<{ stopped: boolean; message?: string }>('/led/reset');
@@ -246,6 +297,7 @@ async function resetEffect(): Promise<void> {
     pushToast('error', error.value);
   } finally {
     busy.value = false;
+    pending.value = '';
   }
 }
 
@@ -269,6 +321,7 @@ function ringTest(): Promise<void> {
 
 async function restoreNative(): Promise<void> {
   busy.value = true;
+  pending.value = 'restore';
   error.value = '';
   try {
     await api.post('/led/restore');
@@ -282,12 +335,14 @@ async function restoreNative(): Promise<void> {
     pushToast('error', error.value);
   } finally {
     busy.value = false;
+    pending.value = '';
   }
 }
 
 async function runAnimation(frames: number[][][], fps: number, repeat: number): Promise<void> {
   if (!frames.length || !zoneCount.value) return;
   busy.value = true;
+  pending.value = 'animation';
   error.value = '';
   try {
     const result = await api.post<AnimationResult>('/led/animation', { frames, fps, repeat });
@@ -298,6 +353,7 @@ async function runAnimation(frames: number[][][], fps: number, repeat: number): 
     pushToast('error', error.value);
   } finally {
     busy.value = false;
+    pending.value = '';
   }
 }
 
@@ -323,6 +379,7 @@ async function applyPreset(preset: LedPreset): Promise<void> {
     return;
   }
   busy.value = true;
+  pending.value = 'apply';
   error.value = '';
   try {
     // A preset is an effect: «Сброс» must be able to put the ring back to what it showed before.
@@ -337,6 +394,7 @@ async function applyPreset(preset: LedPreset): Promise<void> {
     pushToast('error', error.value);
   } finally {
     busy.value = false;
+    pending.value = '';
   }
 }
 
@@ -385,6 +443,11 @@ onMounted(() => {
   if (isConnected.value) void load();
 });
 
+/** Opening the screen while the ladder is still busy must not leave it with no read at all. */
+watch(isConnected, (connectedNow) => {
+  if (connectedNow && !status.value) void load();
+});
+
 onBeforeUnmount(stopLocalAnimationTimer);
 </script>
 
@@ -405,19 +468,22 @@ onBeforeUnmount(stopLocalAnimationTimer);
         </button>
         <button
           class="btn"
-          :class="{ 'btn--primary': !powerOn }"
-          :disabled="busy || !ledAvailable"
+          :class="{ 'btn--primary': powerState === 'off' }"
+          :disabled="busy || !ledAvailable || powerState === 'unknown'"
           :title="
-            powerOn
-              ? 'Погасить кольцо'
-              : savedColors
-                ? 'Вернуть последние применённые цвета'
-                : 'Вернуть штатную индикацию Алисы'
+            powerState === 'unknown'
+              ? 'Состояние кольца ещё не прочитано — сначала обновите'
+              : powerOn
+                ? 'Погасить кольцо'
+                : savedColors
+                  ? 'Вернуть последние применённые цвета'
+                  : 'Вернуть штатную индикацию Алисы'
           "
           @click="togglePower"
         >
-          <Power :size="15" />
-          {{ powerOn ? 'Выключить' : 'Включить' }}
+          <LoaderCircle v-if="pending === 'power'" :size="15" class="spin" />
+          <Power v-else :size="15" />
+          {{ powerLabel }}
         </button>
         <button class="btn" :disabled="busy || !ledAvailable" @click="resetEffect">
           <Eraser :size="15" />
@@ -447,6 +513,14 @@ onBeforeUnmount(stopLocalAnimationTimer);
         <div>{{ error }}</div>
       </div>
 
+      <div v-if="!isConnected" class="alert alert--warn">
+        <AlertTriangle :size="16" />
+        <div>
+          Колонка сейчас не на связи. Команда не потеряется: панель подождёт соединение до 20 секунд
+          и выполнит её, как только станция ответит.
+        </div>
+      </div>
+
       <div class="grid grid-3">
         <div class="card stat">
           <div class="stat-top"><span class="stat-label">LED-зон</span><Lightbulb :size="15" class="muted" /></div>
@@ -472,8 +546,14 @@ onBeforeUnmount(stopLocalAnimationTimer);
             <div class="card-sub">Выберите цвет для каждой зоны и примените его к устройству.</div>
           </div>
           <span v-if="zones[0]?.trigger" class="pill pill--muted mono">{{ zones[0].trigger }}</span>
-          <span class="pill" :class="powerOn ? 'pill--ok' : 'pill--muted'">
-            {{ powerOn ? 'кольцо включено' : 'кольцо выключено' }}
+          <span class="pill" :class="powerState === 'on' ? 'pill--ok' : 'pill--muted'">
+            {{
+              powerState === 'on'
+                ? 'кольцо включено'
+                : powerState === 'off'
+                  ? 'кольцо выключено'
+                  : 'состояние не прочитано'
+            }}
           </span>
         </div>
 
@@ -525,7 +605,7 @@ onBeforeUnmount(stopLocalAnimationTimer);
 
         <div class="toolbar mt-16">
           <button class="btn btn--primary" :disabled="busy || !zoneCount" @click="applySelected">
-            <LoaderCircle v-if="busy" :size="15" class="spin" />
+            <LoaderCircle v-if="pending === 'apply'" :size="15" class="spin" />
             <Palette v-else :size="15" />
             Применить цвета
           </button>
@@ -545,6 +625,11 @@ onBeforeUnmount(stopLocalAnimationTimer);
             <Save :size="15" />
             Сохранить пресет
           </button>
+        </div>
+
+        <div v-if="pending" class="row mt-12 muted" role="status" style="gap: 8px; font-size: 12px">
+          <LoaderCircle :size="14" class="spin" />
+          <span>{{ pendingHint }}</span>
         </div>
 
         <div v-if="zones.some((zone) => zone.missing?.length)" class="alert alert--warn mt-12">

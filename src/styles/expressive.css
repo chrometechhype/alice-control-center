@@ -494,6 +494,8 @@ body,
 
 .page-head__actions {
   flex: 0 0 auto;
+  /* Without a cap the row of buttons keeps its one-line width and scrolls the whole page on a phone. */
+  max-width: 100%;
 }
 
 /* ---------- Cards ---------- */
@@ -662,7 +664,8 @@ body,
   color: var(--muted);
 }
 
-.stat-top .pill {
+/* The compact square slot is for a number («87%»), not for a word: a word pill gets its real width. */
+.stat .stat-top .pill {
   width: 34px;
   height: 34px;
   justify-content: center;
@@ -707,6 +710,8 @@ body,
   font-size: 11px;
   font-weight: 620;
   gap: 6px;
+  /* Squashing a pill spills its label past the rounded background; the row gives way instead. */
+  flex: none;
 }
 
 .pill--ok {

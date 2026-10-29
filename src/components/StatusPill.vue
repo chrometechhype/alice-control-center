@@ -71,8 +71,10 @@ const tone = computed(() => {
 </template>
 
 <style scoped>
+/* This pill may shrink: in a tight row the point is to keep it, not to push the buttons out. */
 .pill {
   min-width: 0;
+  flex-shrink: 1;
 }
 
 /* Длинная подпись не должна выталкивать из строки кнопки — иначе в боковой панели их не видно. */

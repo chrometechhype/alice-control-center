@@ -453,6 +453,8 @@ ul {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
+  /* On a phone a title and two pills do not fit on one line; the pills drop below instead of squeezing the text. */
+  flex-wrap: wrap;
 }
 
 .card-title {
@@ -755,6 +757,8 @@ ul {
   border: 1px solid var(--line);
   color: var(--text-soft);
   white-space: nowrap;
+  /* A squashed pill must clip its label inside the rounded background, not spill past its edge. */
+  overflow: hidden;
 }
 
 .pill svg {
