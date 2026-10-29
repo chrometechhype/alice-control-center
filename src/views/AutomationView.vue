@@ -857,7 +857,7 @@ onMounted(() => {
                 v-model="aiPrompt"
                 class="input"
                 maxlength="240"
-                placeholder="Например: кольцо мигает красным, а Алиса говорит «ошибка, ошибка, ошибка»"
+                placeholder="Например: кольцо мигает красным, а Алиса восклицает «Ошибка! Ошибка!»"
               />
             </div>
             <button class="btn btn--primary" :disabled="generating" @click="generate">
@@ -1031,7 +1031,8 @@ onMounted(() => {
                     class="input"
                     style="flex: 1; min-width: 150px"
                     maxlength="300"
-                    placeholder="Текст, который произнесёт колонка"
+                    placeholder="Ошибка! Проверьте колонку."
+                    title="Знаки препинания задают интонацию: ? ! , . …"
                     aria-label="Текст озвучки"
                   />
 

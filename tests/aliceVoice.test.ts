@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { StationAdapter, StreamExecOptions, StreamExecResult } from '../server/adapters/StationAdapter.ts';
-import { AliceFrameReader, buildAliceFrames, speakWithAlice } from '../server/aliceVoice.ts';
+import { AliceFrameReader, buildAliceFrames, prepareSpeech, speakWithAlice } from '../server/aliceVoice.ts';
 
 /** Frames produced by the reference implementation from alice-say.py, byte for byte. */
 const REFERENCE_SUBSCRIBE = '2c000000e20f253a0f416c6963654361706162696c697479a201110a0f416c6963654361706162696c697479e80fd201';
@@ -158,6 +158,34 @@ describe('AliceFrameReader', () => {
     const broken = Buffer.alloc(4);
     broken.writeUInt32LE(0x7fffffff, 0);
     expect(() => reader.push(broken)).toThrow(/размер кадра/);
+  });
+});
+
+describe('prepareSpeech', () => {
+  it('keeps the punctuation that becomes intonation', () => {
+    expect(prepareSpeech('Ошибка! Проверьте колонку?')).toBe('Ошибка! Проверьте колонку?');
+    expect(prepareSpeech('Раз, два, три…')).toBe('Раз, два, три…');
+  });
+
+  it('puts spaces where they keep the pause and removes them where they swallow it', () => {
+    expect(prepareSpeech('  Ошибка ,  проверьте   колонку ?  ')).toBe('Ошибка, проверьте колонку?');
+    expect(prepareSpeech('Привет.Как дела?')).toBe('Привет. Как дела?');
+    expect(prepareSpeech('Привет... Как дела?')).toBe('Привет... Как дела?');
+  });
+
+  it('does not break a decimal comma', () => {
+    expect(prepareSpeech('Осталось 1,5 литра')).toBe('Осталось 1,5 литра');
+  });
+
+  it('refuses SSML the station would read out loud', async () => {
+    const adapter = fakeAdapter({
+      onSpeak: () => {
+        throw new Error('the station must not be asked to speak tags');
+      },
+    });
+    await expect(speakWithAlice(adapter, '<speak>Да.</speak>')).rejects.toMatchObject({
+      code: 'ALICE_TTS_MARKUP',
+    });
   });
 });
 

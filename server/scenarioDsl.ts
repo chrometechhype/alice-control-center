@@ -96,7 +96,7 @@ const RawScenarioSchema = z.object({
 });
 
 export const SCENARIO_EXAMPLE =
-  '{"name":"Авария","trigger":"device.connect","steps":[{"kind":"led","effect":"pulse","colors":["#ff2d2d"],"fps":26,"seconds":4},{"kind":"say","text":"Авария. Ошибка системы.","parallelWith":1}]}';
+  '{"name":"Авария","trigger":"device.connect","steps":[{"kind":"led","effect":"pulse","colors":["#ff2d2d"],"fps":26,"seconds":4},{"kind":"say","text":"Авария! Проверьте колонку.","parallelWith":1}]}';
 
 export function scenarioSystemPrompt(zones: number): string {
   return [
@@ -109,7 +109,8 @@ export function scenarioSystemPrompt(zones: number): string {
     '- "мигает/пульсирует" -> led effect "pulse". "бежит/крутится" -> "sweep". "дышит" -> "breathe". "искрит" -> "sparkle". "волны" -> "ripple". "ровно горит" -> "solid". "градиент/переливается" -> "gradient".',
     `led "effect" values you may use: ${SCENE_EFFECTS.join(', ')}. Nothing else.`,
     '- "say" is what the speaker says out loud. If the user writes the words («алиса говорит "ошибка"»), use exactly those words, repeated as many times as the user asked. Keep one say step under 200 characters.',
-    '- Write "say" the way a person should be heard: capital start, commas between repeated words, a period at the end («Ошибка, ошибка, ошибка.»). Do not change the words themselves.',
+    '- Write "say" the way a person should be heard. Punctuation is the speaker\'s only intonation: an alarm or warning ends with «!» («Ошибка! Ошибка!»), a question with «?», an enumeration uses commas, a calm statement a period, «…» adds a pause. Keep the punctuation the user wrote. Do not change the words themselves.',
+    '- Never put SSML tags (<break>, <prosody>, <speak>) into "say": the station reads them out loud instead of pausing.',
     '- "notify" writes a line into the panel journal and is never spoken. Use it only when the user says «запиши в журнал», «уведоми» or «сообщи в журнал»; the words to be heard go in "say".',
     '- "parallelWith" is the 1-based number of an EARLIER step that must start in the same moment. A ring show and the words/sound that belong to it are one signal: put the led step first and give the say step "parallelWith" pointing at it, otherwise the words wait until the whole show is over. Use a plain sequence (no parallelWith) only when the user says "сначала … потом …".',
     '- A step order is the timeline. Use "pause" between steps only when the user asks for a pause.',

@@ -14,6 +14,27 @@ const MAX_TEXT_LENGTH = 2000;
 
 type AliceTransport = 'socat' | 'nc' | 'busybox-nc';
 
+/**
+ * The station's speech stack has no SSML: measured on Plum, `<speak>Да.</speak>` takes 4.8 s instead
+ * of 1.7 s because the synthesiser reads the tag names out loud. Intonation comes only from the
+ * text itself, so markup is refused with an explanation instead of being spoken.
+ */
+const SPEECH_MARKUP = /<\s*\/?\s*(?:speak|p|s|break|prosody|emphasis|sub|say-as|phoneme|voice|audio)\b[^>]*>/i;
+
+/**
+ * Punctuation is the station's only intonation control: «?» lifts the voice, «!» makes it loud,
+ * commas and periods add pauses. A space before a comma or a missing space after a period swallows
+ * that pause, so the phrase is tidied here and then goes to the synthesiser as plain text.
+ */
+export function prepareSpeech(text: string): string {
+  return text
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\s+([,.;:!?…])/g, '$1')
+    .replace(/([,;:])(?=[^\s,;:\d])/g, '$1 ')
+    .replace(/([.!?…])(?=[^\s.!?…)\]»"”’])/g, '$1 ');
+}
+
 const TRANSPORT_COMMAND: Record<AliceTransport, string> = {
   socat: `socat STDIO TCP:127.0.0.1:${IPC_PORT},connect-timeout=2`,
   nc: `nc 127.0.0.1 ${IPC_PORT}`,
@@ -234,7 +255,14 @@ async function speakOnce(
   text: string,
   options: { timeoutMs?: number },
 ): Promise<AliceSpeechResult> {
-  const clean = text.trim();
+  if (SPEECH_MARKUP.test(text)) {
+    throw new AccError(
+      'ALICE_TTS_MARKUP',
+      'Станция не понимает SSML: она прочитает теги вслух. Интонацию задайте самим текстом — «?» поднимает голос, «!» делает громче, запятые и точки дают паузы.',
+      400,
+    );
+  }
+  const clean = prepareSpeech(text);
   if (!clean) throw new AccError('EMPTY_TEXT', 'Введите текст, который должна произнести Алиса', 400);
   if (clean.length > MAX_TEXT_LENGTH) {
     throw new AccError(
