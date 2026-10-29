@@ -286,10 +286,14 @@ ul {
   overflow-y: auto;
   padding: 2px 0;
   flex: 1;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--line) 80%, transparent) transparent;
+  /* Обрезанный пункт на границе прокрутки выглядел как артефакт: гасим его краем, а не ножом. */
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent 100%);
 }
 
 .nav-group {
-  padding: 14px 10px 6px;
+  padding: 10px 10px 4px;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -301,7 +305,7 @@ ul {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 9px 11px;
+  padding: 6px 11px;
   border-radius: 11px;
   color: var(--text-soft);
   font-weight: 550;
@@ -488,6 +492,25 @@ ul {
   grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
+}
+
+/* Две колонки одинаковой высоты: карточки сами распределяются по столбцам, поэтому под коротким
+   столбцом не остаётся чёрной дыры на пол-экрана. */
+@media (min-width: 1600px) {
+  .split--balanced {
+    display: block;
+    columns: 2;
+    column-gap: 16px;
+  }
+
+  .split--balanced > * {
+    display: contents;
+  }
+
+  .split--balanced .card {
+    break-inside: avoid;
+    margin-bottom: 16px;
+  }
 }
 
 .stack {

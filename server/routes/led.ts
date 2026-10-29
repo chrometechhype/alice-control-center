@@ -10,11 +10,13 @@ import { asyncRoute, sendOk } from '../http.ts';
 import {
   allLedsOff,
   applyColors,
+  captureRestorePoint,
   clearRestorePoint,
   describeMismatches,
   ledPowerOn,
-  markRestorePoint,
   restoreNative,
+  restorePointKind,
+  saveRestorePoint,
   zonesFromCapabilities,
 } from '../ledControl.ts';
 import { animationStatus, startAnimation, stopAnimation } from '../ledAnimation.ts';
@@ -98,9 +100,10 @@ ledRouter.post(
   '/apply',
   asyncRoute(async (req, res) => {
     const { colors, effect } = parseApplyBody(req.body);
+    // Read the ring before anything is written: that colour is what «Сброс» must bring back.
+    if (effect && !animationStatus().running) saveRestorePoint(await captureRestorePoint());
     await stopAnimation({ restore: false });
-    if (effect) markRestorePoint();
-    else clearRestorePoint();
+    if (!effect) clearRestorePoint();
     const result = await applyColors(colors);
     sendOk(res, {
       zones: result.colors,
@@ -148,17 +151,25 @@ ledRouter.post(
   '/reset',
   asyncRoute(async (_req, res) => {
     const wasRunning = animationStatus().running;
+    // Read before stopAnimation() consumes the point.
+    const mode = restorePointKind();
     await stopAnimation();
+    const message =
+      mode === 'native'
+        ? 'LED-кольцо возвращено штатной индикации Алисы'
+        : mode === 'off'
+          ? 'LED-кольцо возвращено в выключенное состояние'
+          : wasRunning
+            ? 'LED-эффект остановлен, кольцо возвращено к цвету до эффекта'
+            : 'LED-кольцо возвращено к цвету до эффекта';
     eventLog.append({
       level: 'info',
       module: 'led',
       operation: 'reset',
       result: 'ok',
-      message: wasRunning
-        ? 'LED-эффект остановлен, кольцо возвращено к цвету до эффекта'
-        : 'LED-кольцо сброшено к цвету до эффекта',
+      message,
     });
-    sendOk(res, { reset: true, stopped: wasRunning, power: ledState() });
+    sendOk(res, { reset: true, stopped: wasRunning, mode, message, power: ledState() });
   }),
 );
 
@@ -199,7 +210,7 @@ ledRouter.post(
     }
     const { frames, fps, loop } = parsed.data;
     const repeat = loop ? 0 : parsed.data.repeat;
-    markRestorePoint();
+    // startAnimation() captures the restore point from the ring before it writes anything.
     const state = await startAnimation({ frames, fps, repeat, loop });
     const seconds = state.durationMs ? state.durationMs / 1000 : 0;
     sendOk(res, {

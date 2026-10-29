@@ -22,6 +22,7 @@ import {
 import type { BackupManifest, SoundFile, SoundListing } from '@shared/types';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import EmptyState from '@/components/EmptyState.vue';
+import OfflineState from '@/components/OfflineState.vue';
 import Modal from '@/components/Modal.vue';
 import VolumeControl from '@/components/VolumeControl.vue';
 import { ApiError, api, apiUrl, errorMessage, triggerDownload } from '@/lib/api';
@@ -423,11 +424,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-if="!everConnected" class="card">
-      <EmptyState title="Колонка не отвечает" text="Панель ещё не связалась с колонкой в этой сессии. Sound Studio читает реальный каталог звуков на колонке. Откройте «Мастер подключения» или подождите — панель сама пробует снова.">
-        <template #icon><AudioLines :size="22" /></template>
-      </EmptyState>
-    </div>
+    <OfflineState v-if="!everConnected" feature="Sound Studio читает реальный каталог звуков на колонке." />
 
     <template v-else>
       <div v-if="error" class="alert alert--error">

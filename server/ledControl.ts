@@ -73,32 +73,86 @@ function nativeLines(zones: LedZone[]): string[] {
   return lines;
 }
 
-/**
- * What the ring should show once an effect ends: the colours ACC last wrote, or a dark ring if it
- * was switched off, or Alice's own indication when ACC never owned the ring. Without this the last
- * animation frame simply stayed frozen — the «зависла на одном цвете» bug.
- */
-export function restoreLines(zones: LedZone[]): string[] {
-  return linesForState(zones, ledState());
-}
-
-function linesForState(zones: LedZone[], state: LedState): string[] {
+export function restoreLinesForState(zones: LedZone[], state: LedState): string[] {
   if (!state.on) return offLines(zones);
   if (state.colors?.length) return writeLines(zones, state.colors);
   return nativeLines(zones);
 }
 
+/** Alice's own indication — what «Сброс» means when ACC has nothing real to put back. */
+const NATIVE_POINT: LedState = { colors: null, on: true };
+
 /**
- * «Сброс» promises the colour from *before* the effect, and the ring itself remembers nothing. The
- * point is captured once, when the first effect of a session starts: a random colour already counted
- * as a saved colour, so restoring the saved state simply wrote that random colour back and reset
- * looked broken. A deliberate apply, power change or hand-over to Alice ends the session and clears
- * the point, because that state is the new "before".
+ * «Сброс» promises the colour from *before* the effect, and only the ring knows that colour. Reading
+ * it back is the difference between an honest restore and an old preset resurrected from the file:
+ * the JSON copy goes stale the moment the ring is changed by Alice, a reboot or a manual command,
+ * and issue #2 was exactly that — reset brought back a preset deleted long ago.
  */
+export async function readRingState(
+  adapter: StationAdapter,
+  zones: LedZone[],
+): Promise<LedState | null> {
+  const script = zones
+    .flatMap((zone) => [zone.red, zone.green, zone.blue])
+    .map((device) => {
+      const base = shQuote(`/sys/class/leds/${device}`);
+      return `printf '%s|%s|%s\\n' "${device}" "$(cat ${base}/trigger 2>/dev/null)" "$(cat ${base}/brightness 2>/dev/null)"`;
+    })
+    .join('\n');
+  const result = await adapter.exec(script, { timeoutMs: 6000, maxBytes: 8000 });
+  const channels = new Map<string, { trigger: string; value: number | null }>();
+  for (const line of result.stdout.split('\n')) {
+    const [name, trigger, value] = line.trim().split('|');
+    if (!name) continue;
+    const active = /\[([^\]]+)\]/.exec(trigger ?? '')?.[1] ?? '';
+    const parsed = value == null || value === '' ? null : Number(value);
+    channels.set(name, { trigger: active, value: parsed != null && Number.isFinite(parsed) ? parsed : null });
+  }
+
+  const colors: number[][] = [];
+  let known = 0;
+  for (const zone of zones) {
+    const values: number[] = [];
+    for (const device of [zone.red, zone.green, zone.blue]) {
+      const channel = channels.get(device);
+      if (channel?.value == null) {
+        values.push(0);
+        continue;
+      }
+      known += 1;
+      // A stock trigger drives the ring on its own; freezing its current frame would be a lie.
+      if (channel.trigger && channel.trigger !== 'none') return NATIVE_POINT;
+      values.push(Math.max(0, Math.min(255, Math.round(channel.value))));
+    }
+    colors.push(values);
+  }
+  if (!known) return null;
+  const lit = colors.some((color) => color.some((value) => value > 0));
+  return lit ? { colors, on: true } : { colors: null, on: false };
+}
+
 let restorePoint: LedState | null = null;
 
-export function markRestorePoint(): void {
-  restorePoint ??= ledState();
+/**
+ * The point is captured once, when the first effect starts, and from the ring itself. A deliberate
+ * apply, power change or hand-over to Alice ends the session and clears it — that state is the new
+ * "before".
+ */
+export async function captureRestorePoint(): Promise<LedState | null> {
+  const zones = zonesFromCapabilities();
+  if (!zones.length) return null;
+  try {
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: false });
+    return await readRingState(adapter, zones);
+  } catch {
+    // No point captured: «Сброс» will hand the ring back to Alice instead of inventing a colour.
+    return null;
+  }
+}
+
+/** The first captured point wins: a show that keeps changing colours has one "before". */
+export function saveRestorePoint(point: LedState | null): void {
+  if (point && !restorePoint) restorePoint = point;
 }
 
 export function clearRestorePoint(): void {
@@ -106,14 +160,35 @@ export function clearRestorePoint(): void {
 }
 
 export function restorePointLines(zones: LedZone[]): string[] {
-  return linesForState(zones, restorePoint ?? ledState());
+  return restoreLinesForState(zones, restorePoint ?? NATIVE_POINT);
+}
+
+/** What «Сброс» is about to put back — for the honest message in the UI. */
+export function restorePointKind(): 'colors' | 'native' | 'off' {
+  const point = restorePoint ?? NATIVE_POINT;
+  if (!point.on) return 'off';
+  return point.colors?.length ? 'colors' : 'native';
 }
 
 /** After a successful reset the ring really is at the point, so «Включить» must return there too. */
 export function commitRestorePoint(): void {
-  if (!restorePoint) return;
-  rememberState(restorePoint);
+  const point = restorePoint ?? NATIVE_POINT;
+  rememberState(point);
   restorePoint = null;
+}
+
+/** Keeps the local copy in step with the ring after an effect restored itself on the device. */
+export async function syncLedStateFromRing(): Promise<void> {
+  const zones = zonesFromCapabilities();
+  if (!zones.length) return;
+  const adapter = connectionManager.getAdapter();
+  if (!adapter?.isConnected()) return;
+  try {
+    const point = await readRingState(adapter, zones);
+    if (point) rememberState(point);
+  } catch {
+    // The local copy is only a shortcut; leaving it alone costs nothing.
+  }
 }
 
 function readBackScript(zones: LedZone[]): string {

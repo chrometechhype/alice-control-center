@@ -105,6 +105,33 @@ function hashFile(file) {
   }
 }
 
+/**
+ * ZIP archives carry no Unix modes, so an update over an installed panel left start.sh without +x
+ * and `./start.sh` answered «Permission denied» (issue #3). The copy restores the bit here.
+ */
+function ensureExecutableScripts(root) {
+  if (process.platform === 'win32') return 0;
+  let fixed = 0;
+  for (const dir of [root, path.join(root, 'scripts')]) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.sh')) continue;
+      try {
+        fs.chmodSync(path.join(dir, entry.name), 0o755);
+        fixed += 1;
+      } catch {
+        // A read-only project still runs through `bash start.sh`; nothing else to do here.
+      }
+    }
+  }
+  return fixed;
+}
+
 function runCommand(command, args) {
   const output = fs.openSync(path.join(logDir, 'update-process.log'), 'a');
   try {
@@ -162,6 +189,8 @@ async function main() {
   try {
     copyTopLevel(sourceRoot, projectRoot, newNames);
     log(`Скопировано файлов/каталогов: ${newNames.length}`);
+    const scripts = ensureExecutableScripts(projectRoot);
+    if (scripts) log(`Права +x восстановлены для ${scripts} скрипт(ов) .sh`);
     const lockAfter = hashFile(path.join(projectRoot, 'package-lock.json'));
     if (lockBefore && lockAfter && lockBefore !== lockAfter) {
       writeState('applying', 'Обновляем зависимости.');

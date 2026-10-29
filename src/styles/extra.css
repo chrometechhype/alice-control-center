@@ -216,7 +216,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
+  gap: 12px 18px;
+  flex-wrap: wrap;
   padding: 14px 0;
   border-bottom: 1px dashed var(--line);
 }
@@ -248,6 +249,23 @@
   line-height: 1.45;
 }
 
+.warn-hint {
+  position: relative;
+  padding-left: 14px;
+  line-height: 1.5;
+}
+
+.warn-hint::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--yellow);
+}
+
 .setting-row__control {
   display: flex;
   align-items: center;
@@ -255,6 +273,7 @@
   flex-wrap: wrap;
   gap: 8px;
   flex: none;
+  max-width: 100%;
 }
 
 .text-center {

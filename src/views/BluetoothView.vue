@@ -18,6 +18,7 @@ import {
 } from '@lucide/vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import EmptyState from '@/components/EmptyState.vue';
+import OfflineState from '@/components/OfflineState.vue';
 import { api, errorMessage } from '@/lib/api';
 import { everConnected, isConnected, pushToast, store } from '@/lib/store';
 
@@ -230,11 +231,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-if="!everConnected" class="card">
-      <EmptyState title="Колонка не отвечает" text="Панель ещё не связалась с колонкой в этой сессии. Bluetooth Manager управляет адаптером самой колонки. Откройте «Мастер подключения» или подождите — панель сама пробует снова.">
-        <template #icon><Bluetooth :size="22" /></template>
-      </EmptyState>
-    </div>
+    <OfflineState v-if="!everConnected" feature="Bluetooth Manager управляет адаптером самой колонки." />
 
     <div v-else-if="!available" class="card">
       <EmptyState

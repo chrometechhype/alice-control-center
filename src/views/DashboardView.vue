@@ -16,7 +16,6 @@ import {
   HardDrive,
   Info,
   Lightbulb,
-  Lock,
   MemoryStick,
   RefreshCw,
   ShieldCheck,
@@ -266,12 +265,18 @@ watch(
             <Zap :size="15" :class="{ spin: reconnectBusy }" />
             Повторить подключение
           </button>
+          <RouterLink v-if="!isConnected" to="/setup" class="btn">Открыть мастер</RouterLink>
         </div>
       </div>
       <div class="hero-art">
         <DevicePortrait :info="info" size="lg" :muted="!isConnected" />
       </div>
     </section>
+
+    <div v-if="!isConnected && store.status.lastError" class="alert alert--error">
+      <AlertTriangle :size="16" />
+      <div>{{ store.status.lastError }}</div>
+    </div>
 
     <template v-if="isConnected">
       <div class="ov">
@@ -364,7 +369,6 @@ watch(
           <div class="wifi-card__psk">
             <div class="stat-top">
               <span class="stat-label">Пароль</span>
-              <Lock :size="13" class="muted" />
             </div>
             <div class="wifi-card__value mono">
               {{ wifiPsk ? (wifiRevealed ? wifiPsk : '••••••••') : '—' }}
@@ -578,20 +582,18 @@ watch(
               {{ store.settings?.lanAccess ? 'LAN включён' : 'Только localhost' }}
             </span>
           </div>
-          <div class="stack" style="gap: 8px">
-            <div class="alert">
-              <ShieldCheck :size="15" />
-              <div>
-                Backend слушает {{ store.settings?.lanAccess ? '0.0.0.0 и требует токен для удалённых запросов' : 'только 127.0.0.1 — с телефона панель недоступна' }}.
-              </div>
+          <div class="kv">
+            <div class="kv-row">
+              <span class="kv-key">Backend</span>
+              <span class="kv-value">{{ store.settings?.lanAccess ? '0.0.0.0 + токен' : 'только 127.0.0.1' }}</span>
             </div>
-            <div class="alert">
-              <ShieldCheck :size="15" />
-              <div>Пароль SSH хранится в data/config.json (0600) и никогда не отдаётся frontend.</div>
+            <div class="kv-row">
+              <span class="kv-key">Пароль SSH</span>
+              <span class="kv-value">в config.json (0600)</span>
             </div>
-            <div class="alert alert--info">
-              <Info :size="15" />
-              <div>Опасные операции требуют подтверждения, а команды терминала ограничены белым списком.</div>
+            <div class="kv-row">
+              <span class="kv-key">Опасные операции</span>
+              <span class="kv-value">подтверждение + белый список</span>
             </div>
           </div>
           <RouterLink to="/settings" class="btn mt-12">
@@ -600,26 +602,6 @@ watch(
         </article>
       </div>
     </template>
-
-    <article v-else class="card">
-      <EmptyState
-        title="Нет активного подключения"
-        text="Проверьте, что колонка включена и SSH доступен по локальной сети. Backend не перезапускает станцию автоматически."
-      >
-        <template #icon><ShieldCheck :size="22" /></template>
-        <div class="btn-row mt-12">
-          <button class="btn btn--primary" :disabled="reconnectBusy" @click="reconnect">
-            <RefreshCw :size="15" :class="{ spin: reconnectBusy }" />
-            Повторить подключение
-          </button>
-          <RouterLink to="/setup" class="btn">Открыть мастер</RouterLink>
-        </div>
-      </EmptyState>
-      <div v-if="store.status.lastError" class="alert alert--error mt-12">
-        <AlertTriangle :size="16" />
-        <div>{{ store.status.lastError }}</div>
-      </div>
-    </article>
 
     <ConfirmDialog
       :open="backupDialog"

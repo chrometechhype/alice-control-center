@@ -18,7 +18,7 @@ import {
   Thermometer,
   Wrench,
 } from '@lucide/vue';
-import EmptyState from '@/components/EmptyState.vue';
+import OfflineState from '@/components/OfflineState.vue';
 import { api, errorMessage } from '@/lib/api';
 import { everConnected, isConnected, pushToast, refreshProbe, store } from '@/lib/store';
 import {
@@ -323,12 +323,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-if="!everConnected" class="card">
-      <EmptyState title="Колонка не отвечает" text="Панель ещё не связалась с колонкой в этой сессии. Системный монитор работает только по данным с колонки. Откройте «Мастер подключения» или подождите — панель сама пробует снова.">
-        <template #icon><Server :size="22" /></template>
-        <RouterLink to="/setup" class="btn btn--primary mt-12">Открыть мастер</RouterLink>
-      </EmptyState>
-    </div>
+    <OfflineState v-if="!everConnected" feature="Системный монитор работает только по данным с колонки." />
 
     <template v-else>
       <div class="tabs">
@@ -381,7 +376,7 @@ onMounted(() => {
                 </div>
                 <div>
                   <div class="row"><MemoryStick :size="14" /><span class="soft">RAM</span><span class="spacer" /><strong>{{ formatPct(sample?.memPct) }}</strong></div>
-                  <div class="bar bar--violet mt-8"><span :style="{ width: `${Math.min(100, sample?.memPct ?? 0)}%` }" /></div>
+                  <div class="bar mt-8"><span :style="{ width: `${Math.min(100, sample?.memPct ?? 0)}%` }" /></div>
                   <div class="field-hint mt-8">{{ formatBytes(sample?.memUsedBytes) }} из {{ formatBytes(sample?.memTotalBytes) }}</div>
                 </div>
                 <div>
@@ -405,18 +400,20 @@ onMounted(() => {
                 </div>
                 <div>
                   <div class="row"><span class="soft">/data</span><span class="spacer" /><span class="mono">{{ dataPct != null ? formatPct(dataPct) : '—' }}</span></div>
-                  <div class="bar bar--violet mt-8"><span :style="{ width: `${Math.min(100, dataPct ?? 0)}%` }" /></div>
+                  <div class="bar mt-8"><span :style="{ width: `${Math.min(100, dataPct ?? 0)}%` }" /></div>
                   <div class="field-hint mt-8">{{ formatBytes(sample?.dataUsedBytes) }} / {{ formatBytes(sample?.dataTotalBytes) }}</div>
                 </div>
               </div>
             </article>
-          </div>
-        </div>
 
-        <div v-if="store.warnings.length" class="stack" style="gap: 8px">
-          <div v-for="warning in store.warnings" :key="warning" class="alert alert--warn">
-            <AlertTriangle :size="16" />
-            <div>{{ warning }}</div>
+            <article v-if="store.warnings.length" class="card card--soft">
+              <div class="card-title"><AlertTriangle :size="15" /> Что панель не может</div>
+              <div class="stack mt-12" style="gap: 8px">
+                <div v-for="warning in store.warnings" :key="warning" class="field-hint warn-hint">
+                  {{ warning }}
+                </div>
+              </div>
+            </article>
           </div>
         </div>
       </template>

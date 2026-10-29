@@ -20,6 +20,7 @@ import {
 import type { LedPreset } from '@shared/types';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import EmptyState from '@/components/EmptyState.vue';
+import OfflineState from '@/components/OfflineState.vue';
 import Modal from '@/components/Modal.vue';
 import { api, errorMessage } from '@/lib/api';
 import { hexToRgb, hslToRgb, rgbCss, rgbToHex } from '@/lib/format';
@@ -229,14 +230,15 @@ async function resetEffect(): Promise<void> {
   busy.value = true;
   error.value = '';
   try {
-    const result = await api.post<{ stopped: boolean }>('/led/reset');
+    const result = await api.post<{ stopped: boolean; message?: string }>('/led/reset');
     stopLocalAnimationTimer();
     animationRunning.value = false;
     pushToast(
       'ok',
-      result.stopped
-        ? 'Эффект остановлен, кольцо вернулось к цвету до эффекта'
-        : 'Кольцо вернулось к цвету до эффекта',
+      result.message ??
+        (result.stopped
+          ? 'Эффект остановлен, кольцо вернулось к цвету до эффекта'
+          : 'Кольцо вернулось к цвету до эффекта'),
     );
     await load();
   } catch (caught) {
@@ -428,11 +430,7 @@ onBeforeUnmount(stopLocalAnimationTimer);
       </div>
     </div>
 
-    <div v-if="!everConnected" class="card">
-      <EmptyState title="Колонка не отвечает" text="Панель ещё не связалась с колонкой в этой сессии. LED Studio работает с реальным кольцом колонки. Откройте «Мастер подключения» или подождите — панель сама пробует снова.">
-        <template #icon><Lightbulb :size="22" /></template>
-      </EmptyState>
-    </div>
+    <OfflineState v-if="!everConnected" feature="LED Studio работает с реальным кольцом колонки." />
 
     <div v-else-if="!ledAvailable" class="card">
       <EmptyState

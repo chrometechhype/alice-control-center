@@ -19,7 +19,6 @@ import {
   QrCode,
   RefreshCw,
   Server,
-  Settings,
   ShieldCheck,
   Smartphone,
   Sun,
@@ -29,7 +28,6 @@ import {
 import type { AiProviderId, AppSettings, PublicAiSettings, PublicConnectionConfig, ThemeMode } from '@shared/types';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import DevicePortrait from '@/components/DevicePortrait.vue';
-import SocialLinks from '@/components/SocialLinks.vue';
 import UpdateNotes from '@/components/UpdateNotes.vue';
 import {
   detectDeviceVisual,
@@ -477,7 +475,7 @@ onMounted(() => {
       <div>{{ error }}</div>
     </div>
 
-    <div class="split">
+    <div class="split split--balanced">
       <div class="stack">
         <article class="card">
           <div class="card-head">
@@ -959,9 +957,9 @@ onMounted(() => {
           <div class="setting-row">
             <div class="setting-row__text">
               <strong>Тема оформления</strong>
-              <span>Светлая, тёмная или автоматически по настройке Windows/телефона.</span>
+              <span>Светлая, тёмная или как в системе.</span>
             </div>
-            <div class="segmented" role="group" aria-label="Тема оформления">
+            <div class="segmented segmented--fill" role="group" aria-label="Тема оформления">
               <button
                 v-for="option in themeOptions"
                 :key="option.value"
@@ -1109,9 +1107,16 @@ onMounted(() => {
         </article>
 
         <article class="card">
-          <div class="card-title"><Settings :size="15" /> Сессия</div>
-          <div class="kv mt-12">
-            <div class="kv-row"><span class="kv-key">Режим</span><span class="kv-value">{{ store.auth.required ? 'LAN + токен' : 'локальный' }}</span></div>
+          <div class="card-head">
+            <div>
+              <div class="card-title"><ShieldCheck :size="15" /> Доступ и безопасность</div>
+              <div class="card-sub">Сессия панели и правила, которые backend соблюдает всегда</div>
+            </div>
+            <span class="pill" :class="store.auth.required ? 'pill--warn' : 'pill--ok'">
+              {{ store.auth.required ? 'LAN + токен' : 'локальный' }}
+            </span>
+          </div>
+          <div class="kv">
             <div class="kv-row"><span class="kv-key">Токен задан</span><span class="kv-value">{{ settings?.lanTokenSet ? 'да' : 'нет' }}</span></div>
             <div class="kv-row"><span class="kv-key">WebSocket</span><span class="kv-value">{{ store.wsState }}</span></div>
             <div class="kv-row"><span class="kv-key">Адрес панели</span><span class="kv-value mono">{{ panelHost }}</span></div>
@@ -1121,15 +1126,9 @@ onMounted(() => {
             Выйти из панели
           </button>
           <p v-else class="field-hint mt-8">Локальная сессия не требует токена. При включении LAN появится вход по токену.</p>
-        </article>
-
-        <article class="card card--soft">
-          <div class="card-title"><ShieldCheck :size="15" /> Безопасность</div>
           <ul class="check-list mt-12">
-            <li><Check :size="14" /><span>По умолчанию backend слушает только 127.0.0.1.</span></li>
-            <li><Check :size="14" /><span>LAN-доступ включается явно и требует авторизацию.</span></li>
             <li><Check :size="14" /><span>Пароли не хранятся в исходниках и не отдаются фронтенду.</span></li>
-            <li><Check :size="14" /><span>Приватные ключи не копируются в проект.</span></li>
+            <li><Check :size="14" /><span>LAN-доступ включается явно и требует авторизацию.</span></li>
             <li><Check :size="14" /><span>Все опасные операции требуют подтверждения.</span></li>
           </ul>
           <div class="alert alert--warn mt-12">
@@ -1138,10 +1137,6 @@ onMounted(() => {
               Не публикуйте root-доступ, SSH или ADB в открытый интернет. Во внешнюю сеть уходят
               только запрос к вашему ИИ-серверу и проверка релизов на GitHub.
             </div>
-          </div>
-          <div class="settings-social">
-            <SocialLinks labels />
-            <span class="muted" style="font-size: 11.5px">Исходники и релизы — на GitHub, связь — в Telegram.</span>
           </div>
         </article>
       </aside>

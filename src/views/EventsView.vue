@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import {
   AlertTriangle,
   Check,
@@ -46,6 +46,39 @@ const filtered = computed(() => {
     }
     return true;
   });
+});
+
+/**
+ * Повторы одного и того же события (обрыв транспорта, серия реплик) схлопываются в одну строку
+ * со счётчиком: журнал читают глазами, а не листают одинаковые строки. Склейка идёт по всему окну,
+ * а не только по соседним строкам — иначе «Колонка не отвечает» между другими записями занимала
+ * экран сотнями копий.
+ */
+const groupedEvents = computed(() => {
+  const rows = new Map<string, { event: AccEvent; count: number; lastTs: number }>();
+  for (const event of filtered.value) {
+    const key = `${event.level}|${event.module}|${event.operation}|${event.message}`;
+    const row = rows.get(key);
+    if (row) {
+      row.count += 1;
+      if (event.ts >= row.lastTs) {
+        row.lastTs = event.ts;
+        row.event = event;
+      }
+    } else {
+      rows.set(key, { event, count: 1, lastTs: event.ts });
+    }
+  }
+  return [...rows.values()].sort((a, b) => b.lastTs - a.lastTs);
+});
+
+const PAGE_SIZE = 60;
+const visibleLimit = ref(PAGE_SIZE);
+const displayEvents = computed(() => groupedEvents.value.slice(0, visibleLimit.value));
+const hiddenEvents = computed(() => Math.max(0, groupedEvents.value.length - displayEvents.value.length));
+
+watch([level, module, query], () => {
+  visibleLimit.value = PAGE_SIZE;
 });
 
 const errorCount = computed(() => store.events.filter((event) => event.level === 'error').length);
@@ -132,9 +165,9 @@ onMounted(() => {
         <div class="stat-foot"><span>В памяти backend</span><span class="mono">live</span></div>
       </div>
       <div class="card stat">
-        <div class="stat-top"><span class="stat-label">В выборке</span><Search :size="15" class="muted" /></div>
-        <div class="stat-value">{{ filtered.length }}</div>
-        <div class="stat-foot"><span>Фильтры применяются сразу</span><span class="mono">ui</span></div>
+        <div class="stat-top"><span class="stat-label">Строк в журнале</span><Search :size="15" class="muted" /></div>
+        <div class="stat-value">{{ groupedEvents.length }}</div>
+        <div class="stat-foot"><span>Повторы склеены</span><span class="mono">{{ filtered.length }} зап.</span></div>
       </div>
       <div class="card stat">
         <div class="stat-top"><span class="stat-label">Ошибки</span><AlertTriangle :size="15" class="muted" /></div>
@@ -167,25 +200,34 @@ onMounted(() => {
         </div>
       </div>
 
-      <div v-if="filtered.length" class="list">
-        <div v-for="event in filtered" :key="event.id" class="event-row" style="cursor: pointer" @click="toggle(event)">
-          <span class="event-level" :class="`event-level--${event.level}`">
-            <component :is="eventIcon(event.level)" :size="13" />
+      <div v-if="displayEvents.length" class="list">
+        <div
+          v-for="row in displayEvents"
+          :key="row.event.id"
+          class="event-row"
+          :class="{ 'event-row--grouped': row.count > 1, 'event-row--open': expanded === row.event.id }"
+          style="cursor: pointer"
+          @click="toggle(row.event)"
+        >
+          <span class="event-level" :class="`event-level--${row.event.level}`">
+            <component :is="eventIcon(row.event.level)" :size="13" />
           </span>
           <div class="list-main">
-            <div class="list-title">{{ event.message }}</div>
+            <div class="list-title">{{ row.event.message }}</div>
             <div class="list-meta">
-              {{ formatDateTime(event.ts) }} · {{ event.module }} / {{ event.operation }} · {{ formatRelative(event.ts) }}
+              {{ formatDateTime(row.lastTs) }} · {{ row.event.module }} / {{ row.event.operation }} ·
+              {{ formatRelative(row.lastTs) }}
             </div>
-            <pre v-if="expanded === event.id && event.details" class="console mt-8" @click.stop>{{
-              JSON.stringify(event.details, null, 2)
+            <pre v-if="expanded === row.event.id && row.event.details" class="console mt-8" @click.stop>{{
+              JSON.stringify(row.event.details, null, 2)
             }}</pre>
           </div>
-          <div class="row" style="gap: 6px">
-            <span class="pill" :class="event.level === 'error' ? 'pill--error' : event.level === 'warn' ? 'pill--warn' : event.level === 'success' ? 'pill--ok' : 'pill--muted'">
-              {{ event.level }}
+          <div class="row" style="gap: 6px; flex: none">
+            <span v-if="row.count > 1" class="pill pill--muted" :title="`Повторов: ${row.count}`">×{{ row.count }}</span>
+            <span class="pill" :class="row.event.level === 'error' ? 'pill--error' : row.event.level === 'warn' ? 'pill--warn' : row.event.level === 'success' ? 'pill--ok' : 'pill--muted'">
+              {{ row.event.level }}
             </span>
-            <span class="mono muted">{{ formatTime(event.ts) }}</span>
+            <span class="mono muted">{{ formatTime(row.lastTs) }}</span>
           </div>
         </div>
       </div>
@@ -196,6 +238,12 @@ onMounted(() => {
       >
         <template #icon><ScrollText :size="22" /></template>
       </EmptyState>
+
+      <div v-if="hiddenEvents" class="row mt-12" style="justify-content: center">
+        <button class="btn" @click="visibleLimit += PAGE_SIZE * 3">
+          Показать ещё {{ Math.min(hiddenEvents, PAGE_SIZE * 3) }} из {{ hiddenEvents }}
+        </button>
+      </div>
     </article>
 
     <div class="alert alert--info">

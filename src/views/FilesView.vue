@@ -23,6 +23,7 @@ import {
 import type { FileEntry, FileRoot } from '@shared/types';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import EmptyState from '@/components/EmptyState.vue';
+import OfflineState from '@/components/OfflineState.vue';
 import Modal from '@/components/Modal.vue';
 import { api, apiUrl, errorMessage, triggerDownload } from '@/lib/api';
 import { formatBytes, formatDateTime, formatRelative } from '@/lib/format';
@@ -308,11 +309,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-if="!everConnected" class="card">
-      <EmptyState title="Колонка не отвечает" text="Панель ещё не связалась с колонкой в этой сессии. Файловый менеджер читает реальные каталоги колонки. Откройте «Мастер подключения» или подождите — панель сама пробует снова.">
-        <template #icon><FolderOpen :size="22" /></template>
-      </EmptyState>
-    </div>
+    <OfflineState v-if="!everConnected" feature="Файловый менеджер читает реальные каталоги колонки." />
 
     <template v-else>
       <div v-if="error" class="alert alert--error">
@@ -332,11 +329,11 @@ onMounted(() => {
               :class="{ active: activeRoot?.path === root.path }"
               @click="list(root.path)"
             >
-              <span style="min-width: 0">
+              <span style="min-width: 0; flex: 1">
                 <span class="truncate" style="display: block">{{ root.label }}</span>
-                <span class="mono muted" style="font-size: 10px">{{ root.path }}</span>
+                <span class="mono muted truncate" style="display: block; font-size: 10px">{{ root.path }}</span>
               </span>
-              <span class="pill" :class="root.writable ? 'pill--ok' : 'pill--muted'">
+              <span class="pill" style="flex: none" :class="root.writable ? 'pill--ok' : 'pill--muted'">
                 {{ root.writable ? 'rw' : 'ro' }}
               </span>
             </button>

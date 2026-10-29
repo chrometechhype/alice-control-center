@@ -1,7 +1,15 @@
 import { ACTION_READY_WAIT_MS, connectionManager } from './connection.ts';
 import { AccError } from './errors.ts';
 import { eventLog } from './events.ts';
-import { requireZones, commitRestorePoint, restoreLines, restorePointLines, zonesFromCapabilities } from './ledControl.ts';
+import {
+  requireZones,
+  captureRestorePoint,
+  commitRestorePoint,
+  saveRestorePoint,
+  restorePointLines,
+  syncLedStateFromRing,
+  zonesFromCapabilities,
+} from './ledControl.ts';
 import type { LedZone } from '../shared/types.ts';
 
 /**
@@ -135,9 +143,11 @@ export async function startAnimation(request: AnimationRequest): Promise<Animati
   requireZones();
   const durationMs = animationDurationMs(frames.length, fps, repeat || 1);
 
+  // Captured before the loop is killed: a running effect would leave only its last frame behind.
+  if (!animationState.running) saveRestorePoint(await captureRestorePoint());
   await stopAnimation({ restore: false });
   const token = ++animationToken;
-  const script = buildAnimationScript(frames, fps, repeat, loop ? [] : restoreLines(requireZones()));
+  const script = buildAnimationScript(frames, fps, repeat, loop ? [] : restorePointLines(requireZones()));
   await adapter.writeFile(ANIMATION_SCRIPT, Buffer.from(script, 'utf8'), 0o755);
   const launch = await adapter.exec(
     `rm -f ${ANIMATION_STOP}; nohup sh ${ANIMATION_SCRIPT} </dev/null >/tmp/acc-led-anim.log 2>&1 &`,
@@ -163,6 +173,8 @@ export async function startAnimation(request: AnimationRequest): Promise<Animati
     animationTimer = setTimeout(() => {
       animationTimer = null;
       if (token === animationToken) animationState = { running: false };
+      // The script put the point back on the ring; the local copy must not keep the last frame.
+      void syncLedStateFromRing();
     }, durationMs + 1500);
   }
   eventLog.append({

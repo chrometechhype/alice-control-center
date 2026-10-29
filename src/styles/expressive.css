@@ -310,12 +310,12 @@ body,
 }
 
 .nav {
-  gap: 3px;
+  gap: 1px;
   padding: 0 2px;
 }
 
 .nav-group {
-  padding: 16px 12px 6px;
+  padding: 10px 12px 4px;
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.01em;
@@ -324,7 +324,7 @@ body,
 }
 
 .nav-link {
-  padding: 10px 14px;
+  padding: 6px 14px;
   border-radius: 999px;
   font-size: 13px;
   font-weight: 560;
@@ -484,6 +484,16 @@ body,
   color: var(--muted);
   margin-top: 6px;
   max-width: 760px;
+}
+
+/* A wide intro used to push the page actions onto a second line, leaving the top-right empty. */
+.page-head > div:first-child {
+  flex: 1 1 420px;
+  min-width: 0;
+}
+
+.page-head__actions {
+  flex: 0 0 auto;
 }
 
 /* ---------- Cards ---------- */
@@ -1013,6 +1023,7 @@ body,
   border-radius: 999px;
   background: var(--surface-2);
   flex-wrap: wrap;
+  max-width: 100%;
 }
 
 .seg {
@@ -1020,7 +1031,7 @@ body,
   align-items: center;
   gap: 7px;
   height: 34px;
-  padding: 0 14px;
+  padding: 0 12px;
   border: none;
   border-radius: 999px;
   background: transparent;
@@ -1032,6 +1043,16 @@ body,
     background-color 0.25s var(--ease),
     color 0.25s var(--ease),
     transform 0.3s var(--ease-spring);
+}
+
+.segmented--fill {
+  width: 100%;
+}
+
+.segmented--fill .seg {
+  flex: 1 1 0;
+  justify-content: center;
+  min-width: 0;
 }
 
 .seg:hover:not(:disabled) {

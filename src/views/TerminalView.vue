@@ -13,6 +13,7 @@ import {
   Trash2,
 } from '@lucide/vue';
 import EmptyState from '@/components/EmptyState.vue';
+import OfflineState from '@/components/OfflineState.vue';
 import { api, errorMessage } from '@/lib/api';
 import { formatDuration, formatTime } from '@/lib/format';
 import { everConnected, isConnected, pushToast } from '@/lib/store';
@@ -132,11 +133,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-if="!everConnected" class="card">
-      <EmptyState title="Колонка не отвечает" text="Панель ещё не связалась с колонкой в этой сессии. Терминал выполняет команды на реальной колонке. Откройте «Мастер подключения» или подождите — панель сама пробует снова.">
-        <template #icon><SquareTerminal :size="22" /></template>
-      </EmptyState>
-    </div>
+    <OfflineState v-if="!everConnected" feature="Терминал выполняет команды на реальной колонке." />
 
     <template v-else>
       <div v-if="error" class="alert alert--error">
