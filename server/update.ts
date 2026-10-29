@@ -554,8 +554,14 @@ function readPackageVersion(directory: string): string | null {
   }
 }
 
-function findApplyScript(): string | null {
+/**
+ * The runner comes from the unpacked release when it is there: a fix in apply-update.mjs has to
+ * work in the update that ships it, not one release later. The installed copy is the fallback.
+ */
+function findApplyScript(sourceRoot: string): string | null {
   const locations = [
+    path.join(sourceRoot, 'scripts', 'apply-update.mjs'),
+    path.join(sourceRoot, 'apply-update.mjs'),
     path.join(projectRoot, 'scripts', 'apply-update.mjs'),
     path.join(projectRoot, 'apply-update.mjs'),
   ];
@@ -630,7 +636,7 @@ export async function installUpdate(confirm: string): Promise<UpdateInstallResul
       400,
     );
   }
-  const script = findApplyScript();
+  const script = findApplyScript(sourceRoot);
   if (!script) {
     fs.rmSync(stagingRoot, { recursive: true, force: true });
     throw new AccError('UPDATE_SCRIPT_MISSING', 'Не найден scripts/apply-update.mjs. Обновление отменено.', 500);
