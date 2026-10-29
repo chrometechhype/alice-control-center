@@ -29,6 +29,7 @@ import { aiRouter } from './routes/ai.ts';
 import { updatesRouter } from './routes/updates.ts';
 import { insightsRouter } from './routes/insights.ts';
 import { currentVersion } from './update.ts';
+import { trackViewer } from './viewers.ts';
 
 let listenersAttached = false;
 
@@ -162,7 +163,8 @@ export function createApp(): AppBundle {
     }
   };
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
+    trackViewer(ws, req.socket.remoteAddress);
     const socket = ws as WebSocket & { isAlive?: boolean };
     socket.isAlive = true;
     socket.on('pong', () => {

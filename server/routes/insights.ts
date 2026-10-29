@@ -3,6 +3,7 @@ import { asyncRoute, sendError, sendOk } from '../http.ts';
 import { ownerMode } from '../config.ts';
 import { repoInsights } from '../insights.ts';
 import { onlineCount, PRESENCE_WINDOW_MS, sendHeartbeat } from '../presence.ts';
+import { viewerCount } from '../viewers.ts';
 
 export const insightsRouter = Router();
 
@@ -21,7 +22,11 @@ insightsRouter.get(
   }),
 );
 
-/** Panels that opted in bump a public counter once per window; this reads the current one. */
+/**
+ * Two different numbers: `viewers` is how many devices hold this panel open right now (local, never
+ * sent anywhere), `online` is how many panels in the world opted into the public counter — two
+ * people on the same panel are one hit there, which is what made «два человека, а показывает один».
+ */
 insightsRouter.get(
   '/presence',
   asyncRoute(async (_req, res) => {
@@ -29,7 +34,12 @@ insightsRouter.get(
       sendError(res, 404, 'NOT_FOUND', 'Маршрут не найден');
       return;
     }
-    void sendHeartbeat();
-    sendOk(res, { online: await onlineCount(), windowSec: PRESENCE_WINDOW_MS / 1000 });
+    // The owner's own panel must be in the window before the counter is read, not after.
+    await sendHeartbeat();
+    sendOk(res, {
+      online: await onlineCount(),
+      viewers: viewerCount(),
+      windowSec: PRESENCE_WINDOW_MS / 1000,
+    });
   }),
 );

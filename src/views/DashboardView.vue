@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import {
   Activity,
@@ -15,6 +15,7 @@ import {
   EyeOff,
   FolderOpen,
   GitFork,
+  Globe,
   HardDrive,
   Info,
   Lightbulb,
@@ -53,6 +54,7 @@ import {
   formatTime,
   formatUptime,
   kindLabel,
+  pluralRu,
 } from '@/lib/format';
 
 const sample = computed(() => store.lastSample);
@@ -227,10 +229,19 @@ function eventIcon(level: string) {
   return Info;
 }
 
+// Кто-то открыл панель или закрыл — счётчик догоняет сам, без ручного «обновить цифры».
+let presenceTimer: number | null = null;
+
 onMounted(() => {
   void refreshBackups().catch(() => undefined);
   void loadInsights();
   void loadPresence();
+  presenceTimer = window.setInterval(() => void loadPresence(), 30_000);
+});
+
+onUnmounted(() => {
+  if (presenceTimer != null) window.clearInterval(presenceTimer);
+  presenceTimer = null;
 });
 
 const insightsBusy = ref(false);
@@ -313,10 +324,15 @@ watch(
         <strong>{{ formatCount(store.insights.latest.downloads) }}</strong>
         у {{ store.insights.latest.version }}
       </span>
-      <span v-if="store.presence.online != null" class="owner-strip__item" :title="`Запущенные панели с включённой галочкой «Участвовать в статистике», за последние ${Math.round(store.presence.windowSec / 60)} минут`">
+      <span v-if="store.presence.viewers != null" class="owner-strip__item" :title="`Столько устройств держат панель открытой прямо сейчас, включая это. Считается на этом сервере по живым подключениям и никуда не отправляется.`">
         <Users :size="15" />
+        <strong>{{ formatCount(store.presence.viewers) }}</strong>
+        в панели
+      </span>
+      <span v-if="store.presence.online != null" class="owner-strip__item" :title="`Запущенные панели с включённой галочкой «Участвовать в статистике», за последние ${Math.round(store.presence.windowSec / 60)} минут`">
+        <Globe :size="15" />
         <strong>{{ formatCount(store.presence.online) }}</strong>
-        в сети
+        {{ pluralRu(store.presence.online, ['панель', 'панели', 'панелей']) }} в сети
       </span>
       <span class="owner-strip__item">
         <Star :size="15" />
