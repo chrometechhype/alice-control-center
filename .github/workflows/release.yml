@@ -43,7 +43,10 @@ jobs:
         run: |
           NOTES="docs/release-notes/${TAG#v}.md"
           if [ ! -f "$NOTES" ]; then
-            NOTES="CHANGELOG.md"
+            # Dumping the whole CHANGELOG into a release page used to pass silently, and people
+            # kept finding "не наш стиль" only after the release was public.
+            echo "::error::Нет описания релиза: ${NOTES}. Создайте файл в стиле docs/release-notes/1.0.0-alpha.14.md и перенакатите тег."
+            exit 1
           fi
           # Any tag, including an alpha one, is published as the latest release: the
           # version suffix carries the maturity, not a GitHub prerelease flag.
