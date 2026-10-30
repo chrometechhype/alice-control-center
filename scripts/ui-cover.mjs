@@ -18,18 +18,21 @@ const stations = [
   { image: 'public/devices/mini-pro.webp', title: 'Мини 3 Про', note: 'Мини' },
   { image: 'public/devices/mini-clock.webp', title: 'Мини с часами', note: 'Мини' },
   { image: 'public/devices/mini-old.webp', title: 'Мини', note: 'первая Мини' },
-  { image: 'public/devices/max.webp', title: 'Макс', note: 'Макс' },
-  { image: 'public/devices/station2.webp', title: 'Станция 2', note: 'Станция' },
-  { image: 'public/devices/station3.webp', title: 'Станция 3', note: 'Станция' },
-  { image: 'public/devices/duo-max.webp', title: 'Дуо Макс', note: 'Станция' },
-  { image: 'public/devices/midi.webp', title: 'Миди', note: 'Станция' },
-  { image: 'public/devices/street.webp', title: 'Стрит', note: 'Станция' },
+  { image: 'public/devices/max.webp', title: 'Макс', note: 'вне поддержки', off: true },
+  { image: 'public/devices/station2.webp', title: 'Станция 2', note: 'вне поддержки', off: true },
+  { image: 'public/devices/station3.webp', title: 'Станция 3', note: 'вне поддержки', off: true },
+  { image: 'public/devices/duo-max.webp', title: 'Дуо Макс', note: 'вне поддержки', off: true },
+  { image: 'public/devices/midi.webp', title: 'Миди', note: 'вне поддержки', off: true },
+  { image: 'public/devices/street.webp', title: 'Стрит', note: 'вне поддержки', off: true },
 ];
+
+const release = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const versionLine = `v${release.version} · MIT`;
 
 const cards = stations
   .map(
     (station) => `
-      <article class="card${station.accent ? ' card--accent' : ''}">
+      <article class="card${station.accent ? ' card--accent' : ''}${station.off ? ' card--off' : ''}">
         <div class="card-media"><img src="${dataUri(station.image)}" alt=""></div>
         <div class="card-title">${station.title}</div>
         <div class="card-note">${station.accent ? '<i></i>' : ''}${station.note}</div>
@@ -131,11 +134,11 @@ const cover = `<!doctype html>
   }
   .lineup-head span { font-size: 12px; color: #5f7d6d; font-weight: 650; letter-spacing: .05em; }
   .cards {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px;
   }
   .card {
     position: relative;
-    height: 186px;
+    height: 158px;
     border-radius: 26px;
     background: rgba(255,255,255,.042);
     border: 1px solid rgba(255,255,255,.085);
@@ -155,10 +158,13 @@ const cover = `<!doctype html>
   }
   .card-media { flex: 1; width: 100%; display: grid; place-items: center; padding-top: 6px; }
   .card-media img {
-    width: 122px; height: 122px; object-fit: contain;
+    width: 104px; height: 104px; object-fit: contain;
     filter: drop-shadow(0 16px 20px rgba(0,0,0,.42));
   }
-  .card--accent .card-media img { width: 132px; height: 132px; }
+  .card--accent .card-media img { width: 112px; height: 112px; }
+  .card--off .card-media img { opacity: .34; filter: saturate(.25) drop-shadow(0 12px 16px rgba(0,0,0,.4)); }
+  .card--off .card-title { color: #93a49b; }
+  .card--off .card-note { color: #7d6f6f; }
   .card-title {
     font-size: 13px; font-weight: 700; color: #eef8f1; letter-spacing: -.01em;
     white-space: nowrap;
@@ -194,25 +200,25 @@ const cover = `<!doctype html>
   <div class="glow glow--peach"></div>
 
   <div class="content">
-    <div class="badge"><i></i>12 МОДЕЛЕЙ · OPEN SOURCE</div>
+    <div class="badge"><i></i>МАЛЕНЬКИЕ СТАНЦИИ · OPEN SOURCE</div>
     <h1>Alice<span>Control Center</span></h1>
-    <p class="sub">Одна панель для <b>всей линейки Яндекс Станций</b>.<br>Свет, звук, Bluetooth и обновления — локально.</p>
+    <p class="sub">Панель для <b>маленьких станций с Алисой</b>.<br>Лайт, Лайт 2 и все Мини — локально.</p>
     <div class="chips">
-      <span>Все станции</span><span>SSH</span><span>LED</span><span>Bluetooth</span><span>OpenAI</span>
+      <span>Лайт · Мини</span><span>SSH</span><span>LED</span><span>Bluetooth</span><span>OpenAI</span>
     </div>
     <div class="stats">
-      <div class="stat"><b>12</b><span>моделей</span></div>
+      <div class="stat"><b>6</b><span>моделей</span></div>
       <div class="stat"><b><em>14</em></b><span>модулей</span></div>
       <div class="stat"><b>0</b><span>облака</span></div>
     </div>
   </div>
 
   <div class="lineup">
-    <div class="lineup-head"><b>Вся линейка с Алисой</b><span>автоопределение модели</span></div>
+    <div class="lineup-head"><b>Лайт и Мини — поддержка</b><span>большие станции — вне поддержки</span></div>
     <div class="cards">${cards}</div>
   </div>
 
-  <div class="version">v0.3.1 · MIT</div>
+  <div class="version">${versionLine}</div>
 
   <div class="foot">
     <div class="foot-group">

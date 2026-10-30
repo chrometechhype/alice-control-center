@@ -204,6 +204,57 @@ const VISUALS: Record<StationKind, Omit<DeviceVisual, 'kind'>> = {
   },
 };
 
+/** Полный набор функций обещан только маленьким станциям — группа нужна лишь для подписи в списке. */
+export const SUPPORTED_KINDS: StationKind[] = ['lite2', 'lite', 'mini', 'mini-pro', 'mini-clock', 'mini-old'];
+
+const MODEL_KEY = 'acc-station-model';
+
+export type StationModelChoice = 'auto' | StationKind;
+
+function readModelChoice(): StationModelChoice {
+  try {
+    const raw = globalThis.localStorage?.getItem(MODEL_KEY);
+    if (!raw || raw === 'auto') return 'auto';
+    return raw in VISUALS ? (raw as StationKind) : 'auto';
+  } catch {
+    return 'auto';
+  }
+}
+
+/** Выбор пользователя, какая у него станция. Меняет только образ и акцент — не доступность функций. */
+export const stationModel = ref<StationModelChoice>(readModelChoice());
+
+export function setStationModel(choice: StationModelChoice): void {
+  stationModel.value = choice;
+  try {
+    globalThis.localStorage?.setItem(MODEL_KEY, choice);
+  } catch {
+    // приватный режим браузера — выбор останется до перезагрузки
+  }
+}
+
+export function resetStationModel(): void {
+  stationModel.value = 'auto';
+  try {
+    globalThis.localStorage?.removeItem(MODEL_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+export const STATION_MODEL_GROUPS: Array<{ title: string; models: Array<{ kind: StationKind; label: string }> }> = [
+  {
+    title: 'Маленькие станции',
+    models: SUPPORTED_KINDS.map((kind) => ({ kind, label: VISUALS[kind].label })),
+  },
+  {
+    title: 'Большие станции',
+    models: (Object.keys(VISUALS) as StationKind[])
+      .filter((kind) => kind !== 'generic' && !SUPPORTED_KINDS.includes(kind))
+      .map((kind) => ({ kind, label: VISUALS[kind].label })),
+  },
+];
+
 export function detectDeviceVisual(info: DeviceInfo | null | undefined): DeviceVisual {
   const haystack = `${info?.modelGuess ?? ''} ${info?.modelRaw ?? ''} ${info?.hostname ?? ''}`.toLowerCase();
   let kind: StationKind = 'generic';
@@ -222,6 +273,8 @@ export function detectDeviceVisual(info: DeviceInfo | null | undefined): DeviceV
   else if (/макс|\bmax\b/.test(haystack)) kind = 'max';
   else if (/мини|mini/.test(haystack)) kind = 'mini-old';
   else if (/лайт|lite/.test(haystack)) kind = 'lite';
+  const choice = stationModel.value;
+  if (choice !== 'auto') kind = choice;
   if (kind === 'lite2') {
     const look = stationLook.value;
     const color = LITE2_COLORS.find((item) => item.id === look.color) ?? LITE2_COLORS[0];

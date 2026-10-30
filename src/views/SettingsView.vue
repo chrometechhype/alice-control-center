@@ -33,9 +33,14 @@ import {
   detectDeviceVisual,
   LITE2_COLORS,
   resetStationLook,
+  resetStationModel,
+  STATION_MODEL_GROUPS,
   setStationLook,
+  setStationModel,
   stationLook,
+  stationModel,
   type Lite2Color,
+  type StationKind,
 } from '@/lib/deviceVisual';
 import { api, errorMessage } from '@/lib/api';
 import { formatBytes } from '@/lib/format';
@@ -181,12 +186,18 @@ function chooseColor(color: Lite2Color): void {
   setStationLook({ color });
 }
 
+function onModelChange(event: Event): void {
+  const value = (event.target as HTMLSelectElement).value;
+  setStationModel(value === 'auto' ? 'auto' : (value as StationKind));
+}
+
 function chooseClock(clock: boolean): void {
   setStationLook({ clock });
 }
 
 function resetLook(): void {
   resetStationLook();
+  resetStationModel();
   pushToast('info', 'Вид станции сброшен к стандартному');
 }
 
@@ -1048,6 +1059,26 @@ onMounted(() => {
                 <strong>{{ visual.label }}</strong>
                 <span>{{ visual.tagline }}</span>
               </div>
+
+              <div class="look__label">Модель станции</div>
+              <select
+                class="select"
+                :value="stationModel"
+                aria-label="Модель станции"
+                @change="onModelChange"
+              >
+                <option value="auto">Определить автоматически</option>
+                <optgroup v-for="group in STATION_MODEL_GROUPS" :key="group.title" :label="group.title">
+                  <option v-for="model in group.models" :key="model.kind" :value="model.kind">
+                    {{ model.label }}
+                  </option>
+                </optgroup>
+              </select>
+              <p class="field-hint">
+                Панель читает модель по SSH, но считывается она не на каждой прошивке — поэтому её
+                можно выбрать руками. От выбора зависят только образ колонки и акцент: ни одна
+                функция не включается и не выключается.
+              </p>
 
               <template v-if="canCustomize">
                 <div class="look__label">Цвет корпуса</div>

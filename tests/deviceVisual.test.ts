@@ -2,10 +2,15 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { DeviceInfo } from '../shared/types.ts';
 import {
   LITE2_COLORS,
+  STATION_MODEL_GROUPS,
+  SUPPORTED_KINDS,
   detectDeviceVisual,
   resetStationLook,
+  resetStationModel,
   setStationLook,
+  setStationModel,
   stationLook,
+  stationModel,
 } from '../src/lib/deviceVisual.ts';
 
 function device(hostname: string, modelGuess = '', modelRaw = ''): DeviceInfo {
@@ -40,6 +45,7 @@ beforeEach(() => {
     configurable: true,
   });
   resetStationLook();
+  resetStationModel();
 });
 
 describe('detectDeviceVisual', () => {
@@ -93,6 +99,41 @@ describe('detectDeviceVisual', () => {
 
   it('handles a missing device', () => {
     expect(detectDeviceVisual(null).kind).toBe('generic');
+  });
+});
+
+describe('Явный выбор модели', () => {
+  it('перекрывает автоопределение и пишет выбор в хранилище', () => {
+    setStationModel('mini2-clock');
+    const visual = detectDeviceVisual(device('Yandex-Lite-gen2-TEST', 'Станция Лайт 2'));
+    expect(visual.kind).toBe('mini2-clock');
+    expect(storage.get('acc-station-model')).toBe('mini2-clock');
+  });
+
+  it('«auto» возвращает автоопределение', () => {
+    setStationModel('max');
+    setStationModel('auto');
+    expect(detectDeviceVisual(device('a', 'Станция Лайт 2')).kind).toBe('lite2');
+    expect(storage.get('acc-station-model')).toBe('auto');
+  });
+
+  it('сброс убирает выбор из хранилища', () => {
+    setStationModel('street');
+    resetStationModel();
+    expect(stationModel.value).toBe('auto');
+    expect(storage.has('acc-station-model')).toBe(false);
+  });
+
+  it('список делится на маленькие и большие станции, «generic» не предлагается', () => {
+    expect(STATION_MODEL_GROUPS.map((group) => group.title)).toEqual([
+      'Маленькие станции',
+      'Большие станции',
+    ]);
+    const all = STATION_MODEL_GROUPS.flatMap((group) => group.models.map((model) => model.kind));
+    expect(new Set(all).size).toBe(all.length);
+    expect(all).not.toContain('generic');
+    expect(STATION_MODEL_GROUPS[0].models.map((model) => model.kind)).toEqual(SUPPORTED_KINDS);
+    expect(all).toEqual(expect.arrayContaining(['lite2', 'max', 'station3', 'duo-max', 'mini2']));
   });
 });
 
