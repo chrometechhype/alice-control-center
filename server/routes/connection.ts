@@ -6,6 +6,9 @@ import { AccError } from '../errors.ts';
 import { discoverSshHosts, localSubnets } from '../discovery.ts';
 import { asyncRoute, sendOk } from '../http.ts';
 import { checkHostTools } from '../hostTools.ts';
+import { installTool } from '../tools.ts';
+import { resetFfmpegProbe } from '../audioConvert.ts';
+import { eventLog } from '../events.ts';
 
 const connectionInput = z.object({
   host: z.string().trim().min(1).max(255),
@@ -94,6 +97,25 @@ connectionRouter.get(
   '/tools',
   asyncRoute(async (_req, res) => {
     sendOk(res, await checkHostTools());
+  }),
+);
+
+/** ffmpeg and adb are host tools; asking a Windows user to edit PATH is a dead end. */
+connectionRouter.post(
+  '/tools/install',
+  asyncRoute(async (req, res) => {
+    const name = String((req.body as { name?: unknown } | null)?.name ?? '').trim();
+    const installed = await installTool(name);
+    resetFfmpegProbe();
+    eventLog.append({
+      level: 'info',
+      module: 'system',
+      operation: 'tool-install',
+      result: 'ok',
+      message: `Панель установила ${name}: ${installed.files.join(', ')}`,
+      details: { path: installed.path },
+    });
+    sendOk(res, { path: installed.path, files: installed.files, tools: await checkHostTools() });
   }),
 );
 

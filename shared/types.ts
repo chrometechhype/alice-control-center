@@ -439,6 +439,10 @@ export interface ToolCheck {
   version?: string;
   path?: string;
   note?: string;
+  /** The panel can fetch this one itself, so a missing tool needs no manual PATH editing. */
+  canInstall?: boolean;
+  /** Found in the panel's own tools folder rather than on PATH. */
+  local?: boolean;
 }
 
 export interface SetupProbeResult {

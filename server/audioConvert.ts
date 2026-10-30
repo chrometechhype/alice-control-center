@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { AccError } from './errors.ts';
+import { localToolPath } from './tools.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -22,9 +23,16 @@ const CONVERT_TIMEOUT_MS = 60_000;
 let ffmpegProbe: Promise<string | null>;
 
 function probeFfmpeg(): Promise<string | null> {
-  return execFileAsync('ffmpeg', ['-version'], { timeout: 10_000, windowsHide: true })
-    .then(() => 'ffmpeg')
+  // A copy the panel downloaded itself wins: it exists even when PATH does not know about it.
+  const local = localToolPath('ffmpeg');
+  return execFileAsync(local ?? 'ffmpeg', ['-version'], { timeout: 10_000, windowsHide: true })
+    .then(() => local ?? 'ffmpeg')
     .catch(() => null);
+}
+
+/** Installing ffmpeg has to invalidate the cached answer, or the first "not found" sticks forever. */
+export function resetFfmpegProbe(): void {
+  ffmpegProbe = undefined as unknown as Promise<string | null>;
 }
 
 export function ffmpegPath(): Promise<string | null> {

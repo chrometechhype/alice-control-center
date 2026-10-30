@@ -3,6 +3,7 @@ declare module 'adm-zip' {
     entryName: string;
     isDirectory: boolean;
     header: { size: number };
+    getData(): Buffer;
   }
 
   export default class AdmZip {

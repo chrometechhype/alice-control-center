@@ -7,6 +7,7 @@ import {
   AudioLines,
   Bluetooth,
   Check,
+  Download,
   Info,
   Lightbulb,
   LoaderCircle,
@@ -63,6 +64,7 @@ const step = ref(1);
 const tools = ref<ToolsResult | null>(null);
 const toolsLoading = ref(false);
 const toolsError = ref('');
+const installing = ref('');
 const probe = ref<ProbePayload | null>(null);
 const probeVisual = computed(() => detectDeviceVisual(probe.value?.info));
 const busy = ref(false);
@@ -171,6 +173,24 @@ async function loadTools(): Promise<void> {
     toolsError.value = errorMessage(caught);
   } finally {
     toolsLoading.value = false;
+  }
+}
+
+const TOOL_KEY: Record<string, string> = { ADB: 'adb', ffmpeg: 'ffmpeg', OpenSSH: 'ssh' };
+
+/** One click instead of hunting a ZIP, unpacking it and editing PATH. */
+async function installTool(tool: ToolRow): Promise<void> {
+  const key = TOOL_KEY[tool.name];
+  if (!key) return;
+  installing.value = key;
+  toolsError.value = '';
+  try {
+    await api.post('/connection/tools/install', { name: key }, 240_000);
+    await loadTools();
+  } catch (caught) {
+    toolsError.value = errorMessage(caught);
+  } finally {
+    installing.value = '';
   }
 }
 
@@ -330,7 +350,17 @@ watch(step, (value) => {
                   <div class="list-title">{{ tool.name }}</div>
                   <div class="list-meta">{{ tool.version || tool.note || 'Без описания' }}</div>
                 </div>
-                <span class="pill" :class="tool.available ? 'pill--ok' : 'pill--warn'">
+                <button
+                  v-if="!tool.available && tool.canInstall"
+                  class="btn btn--sm"
+                  :disabled="Boolean(installing)"
+                  @click="installTool(tool)"
+                >
+                  <LoaderCircle v-if="installing === TOOL_KEY[tool.name]" :size="14" class="spin" />
+                  <Download v-else :size="14" />
+                  {{ installing === TOOL_KEY[tool.name] ? 'Скачиваем…' : 'Скачать' }}
+                </button>
+                <span v-else class="pill" :class="tool.available ? 'pill--ok' : 'pill--warn'">
                   {{ tool.available ? 'Готово' : 'Нет' }}
                 </span>
               </div>
