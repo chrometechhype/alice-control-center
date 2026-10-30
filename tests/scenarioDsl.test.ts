@@ -116,3 +116,17 @@ describe('buildScenario', () => {
     expect(describeStep({ kind: 'pause', seconds: 2 })).toBe('Пауза 2 с');
   });
 });
+
+describe('scenario say mood', () => {
+  it('accepts an optional mood and describes it', () => {
+    const built = buildScenario(
+      JSON.stringify({
+        name: 'Подъём',
+        steps: [{ kind: 'say', text: 'Доброе утро.', mood: 'care' }],
+      }),
+      'скажи доброе утро заботливо',
+    );
+    expect(built?.steps[0]).toMatchObject({ kind: 'say', mood: 'care' });
+    expect(describeStep(built!.steps[0])).toContain('заботливо');
+  });
+});

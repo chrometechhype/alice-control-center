@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SCENE_EFFECTS, type ScenarioStep, type ScenarioTriggerType } from '../shared/types.ts';
 import { AccError } from './errors.ts';
 import { extractJsonObject, parseSceneIntent } from './sceneDsl.ts';
+import { MOOD_LABELS } from './speechShape.ts';
 
 /**
  * A scenario is a short script the station performs: lights move, Alice speaks, the journal gets a
@@ -16,6 +17,7 @@ const EFFECT_NAMES = SCENE_EFFECTS.join(', ');
 const sayStep = z.object({
   kind: z.literal('say'),
   text: z.string().trim().min(1, 'Текст озвучки не может быть пустым').max(2000, 'Фраза длиннее 2000 символов'),
+  mood: z.enum(['neutral', 'calm', 'brisk', 'alert', 'care']).optional(),
 });
 const soundStep = z.object({
   kind: z.literal('sound'),
@@ -111,6 +113,8 @@ export function scenarioSystemPrompt(zones: number): string {
     '- "say" is what the speaker says out loud. If the user writes the words («алиса говорит "ошибка"»), use exactly those words, repeated as many times as the user asked. Keep one say step under 200 characters.',
     '- Write "say" the way a person should be heard. Punctuation is the speaker\'s only intonation: an alarm or warning ends with «!» («Ошибка! Ошибка!»), a question with «?», an enumeration uses commas, a calm statement a period, «…» adds a pause. Keep the punctuation the user wrote. Do not change the words themselves.',
     '- Never put SSML tags (<break>, <prosody>, <speak>) into "say": the station reads them out loud instead of pausing.',
+    '- "say" may carry an optional "mood": calm, brisk, alert or care. It changes only how the line is delivered, never what it says. A wake-up or a kind reminder is "care", a warning is "alert", a status report is "calm".',
+    '- Inside "say", a single "|" forces a new sentence and "||" leaves a long pause. The station gives each sentence its own intonation, which is the only way to keep "?" and "!" audible in a longer line.',
     '- "notify" writes a line into the panel journal and is never spoken. Use it only when the user says «запиши в журнал», «уведоми» or «сообщи в журнал»; the words to be heard go in "say".',
     '- "parallelWith" is the 1-based number of an EARLIER step that must start in the same moment. A ring show and the words/sound that belong to it are one signal: put the led step first and give the say step "parallelWith" pointing at it, otherwise the words wait until the whole show is over. Use a plain sequence (no parallelWith) only when the user says "сначала … потом …".',
     '- A step order is the timeline. Use "pause" between steps only when the user asks for a pause.',
@@ -201,7 +205,7 @@ export function buildScenario(raw: string, prompt: string): PreparedScenario | n
 export function describeStep(step: ScenarioStep): string {
   switch (step.kind) {
     case 'say':
-      return `Сказать «${step.text}»`;
+      return `Сказать «${step.text}»${step.mood && step.mood !== 'neutral' ? ` (${MOOD_LABELS[step.mood]})` : ''}`;
     case 'sound':
       return `Играть ${step.path.split('/').pop() ?? step.path}`;
     case 'led':

@@ -1,5 +1,6 @@
 import type { StationAdapter } from './adapters/StationAdapter.ts';
 import { AccError } from './errors.ts';
+import { shapeSpeech, type SpeechMood } from './speechShape.ts';
 
 /**
  * Alice's own voice, spoken by the station. The firmware keeps its speech stack behind a local IPC
@@ -82,14 +83,19 @@ function rpcFrame(method: number, payload: Buffer): Buffer {
  * Append (1). The subscription goes first on the same connection, so the station publishes the
  * speech state next to the directive instead of silently accepting it.
  */
-export function buildAliceFrames(text: string): Buffer {
-  const directive = Buffer.concat([byteField(1, Buffer.from(text, 'utf8')), integerField(2, 1)]);
-  const request = rpcFrame(
-    8,
-    Buffer.concat([integerField(1, 18), integerField(3, 1), byteField(13, directive)]),
-  );
+/**
+ * One connection, one subscription, then a directive per sentence. Mode Append (1) makes the
+ * station queue them into a single flow of speech, and because each directive ends with its own
+ * mark, each sentence gets its own intonation — which is exactly what a long joined string lost.
+ */
+export function buildAliceFrames(text: string | string[]): Buffer {
+  const segments = Array.isArray(text) ? text : [text];
   const subscribe = rpcFrame(20, byteField(1, CAPABILITY));
-  return Buffer.concat([subscribe, request]);
+  const requests = segments.map((segment) => {
+    const directive = Buffer.concat([byteField(1, Buffer.from(segment, 'utf8')), integerField(2, 1)]);
+    return rpcFrame(8, Buffer.concat([integerField(1, 18), integerField(3, 1), byteField(13, directive)]));
+  });
+  return Buffer.concat([subscribe, ...requests]);
 }
 
 interface Fields {
@@ -202,6 +208,8 @@ export interface AliceSpeechResult {
   completed: boolean;
   durationMs: number;
   transport: AliceTransport;
+  /** How many separate utterances the phrase was shaped into. */
+  phrases: number;
 }
 
 const transportCache = new WeakMap<StationAdapter, AliceTransport | null>();
@@ -226,7 +234,7 @@ let speechQueue: Promise<unknown> = Promise.resolve();
 export function speakWithAlice(
   adapter: StationAdapter,
   text: string,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; mood?: SpeechMood } = {},
 ): Promise<AliceSpeechResult> {
   const run = () => speakOnce(adapter, text, options);
   const next = speechQueue.then(run, run);
@@ -253,7 +261,7 @@ function connectionProblem(stderr: string): string {
 async function speakOnce(
   adapter: StationAdapter,
   text: string,
-  options: { timeoutMs?: number },
+  options: { timeoutMs?: number; mood?: SpeechMood },
 ): Promise<AliceSpeechResult> {
   if (SPEECH_MARKUP.test(text)) {
     throw new AccError(
@@ -262,8 +270,11 @@ async function speakOnce(
       400,
     );
   }
-  const clean = prepareSpeech(text);
-  if (!clean) throw new AccError('EMPTY_TEXT', 'Введите текст, который должна произнести Алиса', 400);
+  const { segments } = shapeSpeech(text, options.mood ?? 'neutral');
+  const clean = segments.join(' ');
+  if (!segments.length || !clean.trim()) {
+    throw new AccError('EMPTY_TEXT', 'Введите текст, который должна произнести Алиса', 400);
+  }
   if (clean.length > MAX_TEXT_LENGTH) {
     throw new AccError(
       'TEXT_TOO_LONG',
@@ -295,7 +306,7 @@ async function speakOnce(
 
   const result = await adapter.streamExec(TRANSPORT_COMMAND[transport], {
     timeoutMs,
-    input: buildAliceFrames(clean),
+    input: buildAliceFrames(segments),
     onStdout: (chunk) => {
       let events: AliceEvent[];
       try {
@@ -347,6 +358,7 @@ async function speakOnce(
       completed,
       durationMs: result.durationMs,
       transport,
+      phrases: segments.length,
     };
   }
   if (started) {
@@ -359,6 +371,7 @@ async function speakOnce(
       completed: false,
       durationMs: result.durationMs,
       transport,
+      phrases: segments.length,
     };
   }
   if (result.timedOut) {

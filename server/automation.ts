@@ -264,7 +264,7 @@ async function executeStep(step: ScenarioStep): Promise<string> {
     }
     case 'say': {
       const adapter = connectionManager.requireAdapter();
-      const speech = await speakWithAlice(adapter, step.text);
+      const speech = await speakWithAlice(adapter, step.text, { mood: step.mood ?? 'neutral' });
       return speech.completed
         ? `Алиса сказала «${step.text.slice(0, 40)}»`
         : `Алиса начала говорить «${step.text.slice(0, 40)}», конец фразы не подтверждён`;

@@ -530,7 +530,7 @@ export type SceneEffect = (typeof SCENE_EFFECTS)[number];
  * the voice then begin together instead of one after the other.
  */
 export type ScenarioStep = (
-  | { kind: 'say'; text: string }
+  | { kind: 'say'; text: string; mood?: SpeechMood }
   | { kind: 'sound'; path: string }
   | { kind: 'led'; effect: SceneEffect; colors: string[]; fps: number; seconds: number; intensity?: number; reverse?: boolean }
   | { kind: 'pause'; seconds: number }
@@ -539,6 +539,9 @@ export type ScenarioStep = (
 ) & { parallelWith?: number };
 
 export type ScenarioStepKind = ScenarioStep['kind'];
+
+/** How the station should deliver a spoken line; see server/speechShape.ts. */
+export type SpeechMood = 'neutral' | 'calm' | 'brisk' | 'alert' | 'care';
 
 export interface AutomationScenario {
   id: string;

@@ -41,6 +41,10 @@ const audioRef = ref<HTMLAudioElement | null>(null);
 const players = ref<string[] | null>(null);
 const stationBusy = ref<string | null>(null);
 const speechText = ref('');
+const speechMood = ref<SpeechMood>('neutral');
+/** Loudness of this one phrase; the slider on the card stays where it was. */
+const speechVolumeOn = ref(false);
+const speechVolume = ref(25);
 const speaking = ref(false);
 const speechError = ref('');
 
@@ -88,7 +92,18 @@ interface AliceSpeechResult {
   completed: boolean;
   durationMs: number;
   transport: string;
+  phrases: number;
 }
+
+const SPEECH_MOODS = [
+  { id: 'neutral', label: 'Как написано' },
+  { id: 'calm', label: 'Спокойно' },
+  { id: 'brisk', label: 'Бодро' },
+  { id: 'alert', label: 'Тревожно' },
+  { id: 'care', label: 'Заботливо' },
+] as const;
+
+type SpeechMood = (typeof SPEECH_MOODS)[number]['id'];
 
 const libraryFiles = computed(() => (listing.value?.files ?? []).filter((file) => file.origin === 'user'));
 const userFreeBytes = computed(() => listing.value?.userFreeBytes ?? null);
@@ -281,12 +296,16 @@ async function sayOnStation(): Promise<void> {
   speaking.value = true;
   speechError.value = '';
   try {
-    const result = await api.post<AliceSpeechResult>('/audio/say', { text }, 200_000);
+    const result = await api.post<AliceSpeechResult>('/audio/say', {
+      text,
+      mood: speechMood.value,
+      ...(speechVolumeOn.value ? { volume: speechVolume.value } : {}),
+    }, 200_000);
     speechText.value = '';
     pushToast(
       'ok',
       result.completed
-        ? `Колонка сказала фразу голосом Алисы${result.voice ? ` (${result.voice})` : ''}. На станции ничего не сохранено.`
+        ? `Алиса сказала${result.phrases > 1 ? ` (${result.phrases} фразы)` : ''}. На станции ничего не сохранено.`
         : 'Алиса заговорила, но подтверждение конца фразы не пришло — проверьте, что колонка договорила.',
     );
   } catch (caught) {
@@ -626,12 +645,48 @@ onMounted(() => {
                 placeholder="Например: загрузка завершена"
               />
               <span class="field-hint">
-                {{ speechText.trim().length }}/{{ speechLimit }} · Алиса читает ваши знаки как
-                интонацию: «?» поднимает голос, «!» делает громче, запятые и точки дают паузы, «…» —
-                длинную паузу. SSML-теги станция читает вслух, поэтому разметка не принимается.
-                Фраза уходит в локальный речевой сервис станции: файлы не создаются, сторонний TTS
-                не используется.
+                {{ speechText.trim().length }}/{{ speechLimit }} · длинная фраза разбивается на
+                предложения, и каждое получает свою интонацию: иначе «?» и «!» в середине теряются.
+                Знаки «|» и «||» ставят паузу. Технические слова (Wi-Fi, SSH, /data/sounds)
+                заменяются тем, как их читают вслух.
               </span>
+            </div>
+            <div class="field">
+              <span class="field-label">Интонация</span>
+              <div class="segmented" role="group" aria-label="Интонация озвучки">
+                <button
+                  v-for="mood in SPEECH_MOODS"
+                  :key="mood.id"
+                  type="button"
+                  class="seg"
+                  :class="{ active: speechMood === mood.id }"
+                  :disabled="speaking || !isConnected"
+                  @click="speechMood = mood.id"
+                >
+                  {{ mood.label }}
+                </button>
+              </div>
+            </div>
+            <div class="field mt-12">
+              <label class="check-row" for="speech-volume">
+                <input id="speech-volume" v-model="speechVolumeOn" type="checkbox" :disabled="speaking || !isConnected" />
+                <span>Сказать тише обычного</span>
+              </label>
+              <div v-if="speechVolumeOn" class="field-hint">
+                Громкость вернётся на место, как только фраза закончится — ползунок на карточке не
+                сдвинется.
+              </div>
+              <input
+                v-if="speechVolumeOn"
+                v-model.number="speechVolume"
+                class="range mt-8"
+                type="range"
+                min="5"
+                max="100"
+                step="5"
+                aria-label="Громкость этой фразы"
+              />
+              <div v-if="speechVolumeOn" class="field-hint mono">{{ speechVolume }}%</div>
             </div>
             <div v-if="speechError" class="alert alert--error">
               <AlertTriangle :size="15" />

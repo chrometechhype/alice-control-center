@@ -6,7 +6,7 @@ import { AccError } from '../errors.ts';
 import { eventLog } from '../events.ts';
 import { asyncRoute, sendOk } from '../http.ts';
 import { parseAmixerMaster } from '../parse.ts';
-import { speakWithAlice } from '../aliceVoice.ts';
+import { speakWithAlice, type AliceSpeechResult } from '../aliceVoice.ts';
 import { assertPlayableSoundPath } from '../security/paths.ts';
 import { findPlayers, playDeviceFile } from '../voice.ts';
 import { percentToLevel, percentToRaw, rawToPercent } from '../volumeScale.ts';
@@ -47,6 +47,47 @@ audioRouter.get(
   }),
 );
 
+/** Writes a percentage the way quasar expects: through its own scale, not the ALSA percent. */
+async function setMasterPercent(
+  adapter: Awaited<ReturnType<typeof connectionManager.awaitReady>>,
+  percent: number,
+  current: AudioState,
+): Promise<void> {
+  const scale = connectionManager.getInfo()?.volumeScale ?? null;
+  const raw = scale ? percentToRaw(scale, clamp(percent, 0, 100), current.max) : null;
+  const result = await adapter.exec(
+    `amixer sset Master ${raw != null ? raw : `${clamp(percent, 0, 100)}%`}`,
+    { timeoutMs: 10_000, maxBytes: 40_000 },
+  );
+  if (result.code !== 0) {
+    throw new AccError('AMIXER_FAILED', result.stderr.trim() || 'Не удалось изменить громкость', 502);
+  }
+}
+
+/**
+ * A phrase can be quieter than the room without the slider moving afterwards: the level is set,
+ * spoken, and put back even if the speech fails. Night announcements asked for exactly this.
+ */
+async function speakAtVolume(
+  adapter: Awaited<ReturnType<typeof connectionManager.awaitReady>>,
+  percent: number | undefined,
+  speak: () => Promise<AliceSpeechResult>,
+): Promise<AliceSpeechResult> {
+  if (percent == null) return speak();
+  const before = await readMaster();
+  if (before.volumePct == null) return speak();
+  try {
+    await setMasterPercent(adapter, percent, before);
+    return await speak();
+  } finally {
+    try {
+      await setMasterPercent(adapter, before.volumePct, before);
+    } catch {
+      // Restoring failed — the next read from the panel will show the real level anyway.
+    }
+  }
+}
+
 audioRouter.post(
   '/volume',
   asyncRoute(async (req, res) => {
@@ -56,24 +97,16 @@ audioRouter.post(
     }
     const percent = clamp(parsed.data.percent, 0, 100);
     const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
-    const scale = connectionManager.getInfo()?.volumeScale ?? null;
     const current = await readMaster();
     // Writing the register in quasar's units is what makes Alice agree with the slider: the same
     // raw value read back through her table returns the percentage the person just set.
-    const raw = scale ? percentToRaw(scale, percent, current.max) : null;
-    const result = await adapter.exec(
-      `amixer sset Master ${raw != null ? raw : `${percent}%`}`,
-      { timeoutMs: 10_000, maxBytes: 40_000 },
-    );
-    if (result.code !== 0) {
-      throw new AccError('AMIXER_FAILED', result.stderr.trim() || 'Не удалось изменить громкость', 502);
-    }
+    await setMasterPercent(adapter, percent, current);
     eventLog.append({
       level: 'info',
       module: 'audio',
       operation: 'volume',
       result: 'ok',
-      message: `Громкость установлена на ${percent}%${raw != null ? ` (регистр ${raw})` : ''}`,
+      message: `Громкость установлена на ${percent}%`,
     });
     sendOk(res, await readMaster());
   }),
@@ -151,21 +184,33 @@ audioRouter.post(
   '/say',
   asyncRoute(async (req, res) => {
     const parsed = z
-      .object({ text: z.string().trim().min(1).max(2000) })
+      .object({
+        text: z.string().trim().min(1).max(2000),
+        mood: z.enum(['neutral', 'calm', 'brisk', 'alert', 'care']).default('neutral'),
+        volume: z.number().int().min(0).max(100).optional(),
+      })
       .strict()
       .safeParse(req.body);
     if (!parsed.success) {
       throw new AccError('BAD_REQUEST', 'Текст для озвучки должен быть от 1 до 2000 символов', 400);
     }
     const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
-    const speech = await speakWithAlice(adapter, parsed.data.text);
+    const speech = await speakAtVolume(adapter, parsed.data.volume, () =>
+      speakWithAlice(adapter, parsed.data.text, { mood: parsed.data.mood }),
+    );
     eventLog.append({
       level: 'info',
       module: 'audio',
       operation: 'say',
       result: 'ok',
       message: `Алиса сказала: ${parsed.data.text.slice(0, 60)}`,
-      details: { engine: speech.engine, transport: speech.transport, durationMs: speech.durationMs },
+      details: {
+        engine: speech.engine,
+        transport: speech.transport,
+        durationMs: speech.durationMs,
+        mood: parsed.data.mood,
+        phrases: speech.phrases,
+      },
     });
     sendOk(res, speech);
   }),
