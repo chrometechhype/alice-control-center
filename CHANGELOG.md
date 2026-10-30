@@ -3,7 +3,7 @@
 Все заметные изменения Alice Control Center. Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии — [Semantic Versioning](https://semver.org/lang/ru/).
 
-## [Unreleased]
+## [1.0.0-alpha.14] — 2026-10-30
 
 Выпуск про честные обещания: полный набор функций панель гарантирует только маленьким станциям,
 а модель теперь можно выбрать руками.
