@@ -33,10 +33,19 @@ interface AdbRow {
   model: string | null;
 }
 
+interface ToolJobRow {
+  name: string;
+  state: 'downloading' | 'unpacking' | 'done' | 'error';
+  received: number;
+  total: number | null;
+  message?: string;
+}
+
 interface ToolsResult {
   tools: ToolRow[];
   adbDevices: AdbRow[];
   adbError?: string;
+  jobs?: ToolJobRow[];
 }
 
 interface ProbePayload {
@@ -178,15 +187,40 @@ async function loadTools(): Promise<void> {
 
 const TOOL_KEY: Record<string, string> = { ADB: 'adb', ffmpeg: 'ffmpeg', OpenSSH: 'ssh' };
 
-/** One click instead of hunting a ZIP, unpacking it and editing PATH. */
+function jobFor(name: string): ToolJobRow | undefined {
+  const key = TOOL_KEY[name];
+  return tools.value?.jobs?.find((job) => job.name === key);
+}
+
+function jobProgress(job: ToolJobRow): string {
+  if (job.state === 'unpacking') return 'Распаковываем…';
+  if (!job.total) return `Скачиваем ${formatBytes(job.received)}`;
+  const pct = Math.min(99, Math.round((job.received / job.total) * 100));
+  return `Скачиваем ${pct}% из ${formatBytes(job.total)}`;
+}
+
+/**
+ * One click instead of hunting a ZIP, unpacking it and editing PATH. The download runs on the
+ * server, so a closed tab or a flaky proxy no longer kills a 170 MB fetch mid-way.
+ */
 async function installTool(tool: ToolRow): Promise<void> {
   const key = TOOL_KEY[tool.name];
   if (!key) return;
   installing.value = key;
   toolsError.value = '';
   try {
-    await api.post('/connection/tools/install', { name: key }, 240_000);
-    await loadTools();
+    await api.post('/connection/tools/install', { name: key }, 30_000);
+    for (let attempt = 0; attempt < 400; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await loadTools();
+      const job = tools.value?.jobs?.find((entry) => entry.name === key);
+      const ready = tools.value?.tools.find((entry) => TOOL_KEY[entry.name] === key)?.available;
+      if (job?.state === 'error') {
+        toolsError.value = job.message ?? 'Не удалось установить инструмент';
+        break;
+      }
+      if (ready || job?.state === 'done') break;
+    }
   } catch (caught) {
     toolsError.value = errorMessage(caught);
   } finally {
@@ -358,7 +392,13 @@ watch(step, (value) => {
                 >
                   <LoaderCircle v-if="installing === TOOL_KEY[tool.name]" :size="14" class="spin" />
                   <Download v-else :size="14" />
-                  {{ installing === TOOL_KEY[tool.name] ? 'Скачиваем…' : 'Скачать' }}
+                  {{
+                    installing === TOOL_KEY[tool.name]
+                      ? jobFor(tool.name)
+                        ? jobProgress(jobFor(tool.name)!)
+                        : 'Скачиваем…'
+                      : 'Скачать'
+                  }}
                 </button>
                 <span v-else class="pill" :class="tool.available ? 'pill--ok' : 'pill--warn'">
                   {{ tool.available ? 'Готово' : 'Нет' }}

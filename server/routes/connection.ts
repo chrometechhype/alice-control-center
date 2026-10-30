@@ -6,7 +6,7 @@ import { AccError } from '../errors.ts';
 import { discoverSshHosts, localSubnets } from '../discovery.ts';
 import { asyncRoute, sendOk } from '../http.ts';
 import { checkHostTools } from '../hostTools.ts';
-import { installTool } from '../tools.ts';
+import { startInstall } from '../tools.ts';
 import { resetFfmpegProbe } from '../audioConvert.ts';
 import { eventLog } from '../events.ts';
 
@@ -105,17 +105,17 @@ connectionRouter.post(
   '/tools/install',
   asyncRoute(async (req, res) => {
     const name = String((req.body as { name?: unknown } | null)?.name ?? '').trim();
-    const installed = await installTool(name);
+    const job = startInstall(name);
     resetFfmpegProbe();
     eventLog.append({
       level: 'info',
       module: 'system',
       operation: 'tool-install',
       result: 'ok',
-      message: `Панель установила ${name}: ${installed.files.join(', ')}`,
-      details: { path: installed.path },
+      message: `Панель начала установку ${name}`,
+      details: { url: job.name },
     });
-    sendOk(res, { path: installed.path, files: installed.files, tools: await checkHostTools() });
+    sendOk(res, { job, tools: await checkHostTools() });
   }),
 );
 

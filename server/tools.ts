@@ -55,20 +55,53 @@ export function installedTools(): string[] {
   return Object.keys(SPECS).filter((name) => localToolPath(name));
 }
 
-async function download(url: string): Promise<Buffer> {
+export type ToolJobState = 'downloading' | 'unpacking' | 'done' | 'error';
+
+export interface ToolJob {
+  name: string;
+  state: ToolJobState;
+  /** Bytes received so far, so the panel can show a real progress bar instead of a spinner. */
+  received: number;
+  total: number | null;
+  message?: string;
+  startedAt: number;
+}
+
+const jobs = new Map<string, ToolJob>();
+
+export function toolJobs(): ToolJob[] {
+  return [...jobs.values()];
+}
+
+async function download(url: string, job: ToolJob): Promise<Buffer> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 180_000);
+  const timer = setTimeout(() => controller.abort(), 600_000);
   try {
     const response = await fetch(url, { signal: controller.signal, redirect: 'follow' });
     if (!response.ok) {
       throw new AccError('TOOL_DOWNLOAD', `Сервер отдал ${response.status} вместо архива`, 502);
     }
-    return Buffer.from(await response.arrayBuffer());
+    const length = Number(response.headers.get('content-length') ?? 0);
+    job.total = Number.isFinite(length) && length > 0 ? length : null;
+
+    if (!response.body) return Buffer.from(await response.arrayBuffer());
+
+    const reader = response.body.getReader();
+    const chunks: Buffer[] = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(Buffer.from(value));
+        job.received += value.byteLength;
+      }
+    }
+    return Buffer.concat(chunks);
   } catch (error) {
     if (error instanceof AccError) throw error;
     throw new AccError(
       'TOOL_DOWNLOAD',
-      'Не удалось скачать архив. Проверьте интернет или скачайте вручную и положите в папку data/tools.',
+      'Не удалось скачать архив. Проверьте интернет, брандмауэр или положите файл вручную в папку data/tools.',
       502,
     );
   } finally {
@@ -76,7 +109,28 @@ async function download(url: string): Promise<Buffer> {
   }
 }
 
-export async function installTool(name: string): Promise<{ path: string; files: string[] }> {
+/**
+ * The download runs in the background: a 170 MB fetch must survive a browser tab that closes or a
+ * proxy that drops the response, and the panel needs somewhere to report progress from.
+ */
+export function startInstall(name: string): ToolJob {
+  const running = jobs.get(name);
+  if (running && (running.state === 'downloading' || running.state === 'unpacking')) return running;
+
+  const job: ToolJob = { name, state: 'downloading', received: 0, total: null, startedAt: Date.now() };
+  jobs.set(name, job);
+  void installTool(name, job)
+    .then(() => {
+      job.state = 'done';
+    })
+    .catch((error: unknown) => {
+      job.state = 'error';
+      job.message = error instanceof AccError ? error.message : 'Не удалось установить инструмент';
+    });
+  return job;
+}
+
+export async function installTool(name: string, job: ToolJob = { name, state: 'downloading', received: 0, total: null, startedAt: Date.now() }): Promise<{ path: string; files: string[] }> {
   const spec = SPECS[name];
   if (!spec) throw new AccError('TOOL_UNKNOWN', `Неизвестный инструмент: ${name}`, 400);
   if (process.platform !== 'win32') {
@@ -87,8 +141,17 @@ export async function installTool(name: string): Promise<{ path: string; files: 
     );
   }
 
-  fs.mkdirSync(toolsDir, { recursive: true });
-  const archive = await download(spec.url);
+  try {
+    fs.mkdirSync(toolsDir, { recursive: true });
+  } catch {
+    throw new AccError(
+      'TOOL_NO_WRITE',
+      `Папка ${toolsDir} недоступна для записи. Перенесите панель в папку пользователя или запустите её от администратора.`,
+      500,
+    );
+  }
+  const archive = await download(spec.url, job);
+  job.state = 'unpacking';
 
   let zip: AdmZip;
   try {
