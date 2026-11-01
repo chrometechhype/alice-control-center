@@ -49,7 +49,9 @@ export class MetricsService extends EventEmitter {
 
   start(): void {
     this.stop();
-    this.previousCpu = null;
+    // /proc/stat only counts down when the station reboots, and computeCpuPct already rejects that.
+    // Clearing the sample here instead made the CPU card read «—» after every reconnect and every
+    // poll-interval change, because the first tick had nothing to compare itself with.
     this.sampleInFlight = false;
     if (this.intervalMs == null) {
       this.intervalMs = Math.max(2000, loadConfig().settings.pollIntervalMs);
