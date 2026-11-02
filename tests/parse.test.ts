@@ -331,3 +331,4 @@ describe('dirTreeCommand', () => {
     expect(dirTreeCommand('/data', 2)).toContain('[ "$k" -lt 2 ]');
   });
 });
+

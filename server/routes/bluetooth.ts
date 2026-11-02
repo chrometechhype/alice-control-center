@@ -15,6 +15,7 @@ import {
 } from '../parse.ts';
 import {
   audioRouteState,
+  setMusicMode,
   switchAudioToHeadphones,
   switchAudioToSpeaker,
   type AudioRouteResult,
@@ -223,8 +224,7 @@ bluetoothRouter.get(
     const route = await connectionManager
       .stationRead((adapter) => audioRouteState(adapter))
       .catch(() => ({ on: false, address: null }));
-    sendOk(res, {
-      controller: {
+    sendOk(res, {      controller: {
         adapter: capabilities.bluetooth.details?.adapter ?? null,
         powered: controller.powered,
         name: controller.name,
@@ -468,19 +468,24 @@ async function a2dpSourceAddresses(): Promise<string[]> {
 bluetoothRouter.post(
   '/audio-route',
   asyncRoute(async (req, res) => {
-    const parsed = z.object({ on: z.boolean() }).safeParse(req.body);
+    const parsed = z.object({ on: z.boolean(), music: z.boolean().optional() }).safeParse(req.body);
     if (!parsed.success) throw new AccError('BAD_REQUEST', 'Нужно указать, куда выводить звук', 400);
-    if (!parsed.data.on) {
+    const { on } = parsed.data;
+    // The music mode belongs to the route: taking the sound back to the column must not leave the
+    // station running a config it no longer needs.
+    const wantMusic = on ? (parsed.data.music ?? false) : false;
+    if (!on) {
       const adapter = await connectionManager.awaitReady(9_000);
+      const mode = await setMusicMode(adapter, false).catch(() => null);
       const result = await switchAudioToSpeaker(adapter);
       eventLog.append({
         level: result.error ? 'warn' : 'info',
         module: 'bluetooth',
         operation: 'audio-route',
-        result: result.error ? 'error' : 'ok',
-        message: result.error ?? 'Звук станции возвращён в колонку',
+        result: result.error || mode?.error ? 'error' : 'ok',
+        message: mode?.error ?? result.error ?? 'Звук станции возвращён в колонку',
       });
-      sendOk(res, result);
+      sendOk(res, { ...result, musicError: mode?.error });
       return;
     }
     const ready = await a2dpSourceAddresses();
@@ -507,7 +512,25 @@ bluetoothRouter.post(
       }
       throw new AccError('AUDIO_ROUTE_FAILED', result.error ?? 'Не удалось переключить звук', 502);
     }
-    sendOk(res, { ...result, name: device.name });
+    if (!wantMusic) {
+      sendOk(res, { ...result, name: device.name });
+      return;
+    }
+    const mode = await connectionManager
+      .stationRead((adapter) => setMusicMode(adapter, true))
+      .catch((caught: unknown) => ({
+        music: 'off' as const,
+        restarted: false,
+        error: caught instanceof Error ? caught.message : 'Станция не ответила',
+      }));
+    eventLog.append({
+      level: mode.error ? 'warn' : 'success',
+      module: 'bluetooth',
+      operation: 'audio-route',
+      result: mode.error ? 'error' : 'ok',
+      message: mode.error ?? 'Яндекс Музыка в наушниках: станция больше не считает их внешним плеером',
+    });
+    sendOk(res, { ...result, music: mode.music, musicError: mode.error, name: device.name });
   }),
 );
 

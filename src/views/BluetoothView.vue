@@ -10,6 +10,7 @@ import {
   Info,
   Link2,
   LoaderCircle,
+  Music2,
   Power,
   RefreshCw,
   ShieldCheck,
@@ -41,11 +42,15 @@ interface BtDevice {
   paired: boolean;
 }
 
+type MusicMode = 'on' | 'off' | 'unsupported';
+
 interface AudioRoute {
   on: boolean;
   address: string | null;
   restarted: boolean;
   skipped?: boolean;
+  music?: MusicMode;
+  musicError?: string;
   error?: string;
 }
 
@@ -53,7 +58,7 @@ interface BtStatus {
   controller: BtController;
   devices: BtDevice[];
   scanning: boolean;
-  audioRoute: { on: boolean; address: string | null };
+  audioRoute: { on: boolean; address: string | null; music?: MusicMode };
   raw: string;
 }
 
@@ -87,6 +92,12 @@ const routedAddress = computed(() => (status.value?.audioRoute?.on ? status.valu
 const routedDevice = computed(
   () => devices.value.find((device) => device.address === routedAddress.value) ?? null,
 );
+
+/** The music mode only means something while the sound is in the headphones. */
+const musicMode = computed<MusicMode | null>(() =>
+  routedAddress.value ? (status.value?.audioRoute?.music ?? 'off') : null,
+);
+const musicOn = computed(() => musicMode.value === 'on');
 
 const controllerName = computed(
   () =>
@@ -172,17 +183,26 @@ async function disconnect(device: BtDevice): Promise<void> {
   }
 }
 
-async function setAudioRoute(on: boolean): Promise<void> {
+async function setAudioRoute(on: boolean, music = false): Promise<void> {
   audioRouteBusy.value = true;
   error.value = '';
   try {
-    const result = await api.post<AudioRoute & { name?: string }>('/bluetooth/audio-route', { on });
+    const result = await api.post<AudioRoute & { name?: string }>('/bluetooth/audio-route', { on, music });
     await load();
     if (!on) {
       if (result.error) pushToast('error', result.error);
+      else if (result.musicError) pushToast('info', result.musicError);
       else pushToast('info', 'Звук снова в колонке');
+    } else if (result.musicError) {
+      pushToast('info', result.musicError);
     } else {
-      pushToast('ok', `Голос Алисы и звуки панели идут в наушники${result.name ? `: ${result.name}` : ''}. Яндекс Музыку прошивка в наушники не отдаёт`);
+      const tail =
+        result.music === 'on'
+          ? 'и Яндекс Музыка теперь играет в них'
+          : result.music === 'unsupported'
+            ? 'режим музыки для этой прошивки не нужен'
+            : 'голос Алисы и звуки панели — в наушниках';
+      pushToast('ok', `Звук станции идёт в наушники${result.name ? `: ${result.name}` : ''}, ${tail}.`);
     }
   } catch (caught) {
     error.value = errorMessage(caught);
@@ -301,13 +321,43 @@ onMounted(() => {
         <div>{{ error }}</div>
       </div>
 
-      <div v-if="routedAddress" class="alert alert--info">
+      <div v-if="routedAddress" class="alert" :class="musicOn ? 'alert--success' : 'alert--info'">
         <Headphones :size="16" />
         <div style="flex: 1">
-          Звук станции идёт в наушники{{ routedDevice ? ` «${routedDevice.name}»` : '' }}: голос Алисы
-          и звуки панели. Яндекс Музыку прошивка в наушники не отдаёт — колонка принимает наш
-          Bluetooth-поток за внешний плеер и останавливает музыку.
+          Звук станции идёт в наушники{{ routedDevice ? ` «${routedDevice.name}»` : '' }}: голос Алисы и
+          звуки панели.
+          <template v-if="musicOn">
+            Колонка больше не считает их внешним плеером, поэтому Яндекс Музыка в них не обрывается.
+          </template>
+          <template v-else-if="musicMode === 'unsupported'">
+            На этой прошивке колонка не описывает внешний Bluetooth-плеер, так что музыка должна играть в
+            наушниках и без режима.
+          </template>
+          <template v-else>
+            Пока режим выключен, колонка принимает наш же Bluetooth-поток за внешний плеер и обрывает трек
+            через долю секунды.
+          </template>
         </div>
+        <button
+          v-if="musicMode === 'off'"
+          class="btn btn--primary btn--sm"
+          :disabled="audioRouteBusy"
+          @click="setAudioRoute(true, true)"
+        >
+          <LoaderCircle v-if="audioRouteBusy" :size="14" class="spin" />
+          <Music2 v-else :size="14" />
+          Музыку в наушники
+        </button>
+        <button
+          v-else-if="musicMode === 'on'"
+          class="btn btn--soft btn--sm"
+          :disabled="audioRouteBusy"
+          @click="setAudioRoute(true, false)"
+        >
+          <LoaderCircle v-if="audioRouteBusy" :size="14" class="spin" />
+          <Music2 v-else :size="14" />
+          Только голос
+        </button>
         <button class="btn btn--soft btn--sm" :disabled="audioRouteBusy" @click="setAudioRoute(false)">
           <LoaderCircle v-if="audioRouteBusy" :size="14" class="spin" />
           <Speaker v-else :size="14" />
@@ -468,8 +518,8 @@ onMounted(() => {
               <li><Info :size="14" /><span>Сканирование ограничено 20 секундами.</span></li>
               <li><Info :size="14" /><span>Ручной PIN не вводится: подтверждение происходит на телефоне или устройстве.</span></li>
               <li><Info :size="14" /><span>Выключение адаптера требует подтверждения.</span></li>
-              <li><Info :size="14" /><span>Если наушники отключатся сами, звук вернётся в колонку в течение полуминуты.</span></li>
-              <li><Info :size="14" /><span>Яндекс Музыка в наушниках не заиграет: прошивка колонки глушит её, как только звук уходит по Bluetooth. Голос Алисы и звуки панели идут в наушники.</span></li>
+              <li><Info :size="14" /><span>Если наушники отключатся сами, звук вернётся в колонку в течение минуты.</span></li>
+              <li><Info :size="14" /><span>«Музыку в наушники» — это режим: панель подменяет конфиг quasar копией из /tmp без признака внешнего Bluetooth-плеера и перезапускает демон этой возможности, поэтому Алиса замолкает секунд на десять. Во флеш-память ничего не пишется, а перезагрузка станции возвращает прошивку как была.</span></li>
             </ul>
             <div class="alert alert--warn mt-12">
               <AlertTriangle :size="15" />
