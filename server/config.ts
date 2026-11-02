@@ -11,6 +11,7 @@ import type {
   PublicSettings,
 } from '../shared/types.ts';
 import { AI_PROVIDER_PRESETS } from '../shared/types.ts';
+import { panelAddresses } from './lanAccess.ts';
 
 export const projectRoot = process.cwd();
 export const dataDir = path.resolve(process.env.ACC_DATA_DIR ?? path.join(projectRoot, 'data'));
@@ -115,13 +116,12 @@ export function rotateLanToken(): string {
 }
 
 export function lanAddresses(): string[] {
-  const result: string[] = [];
-  for (const entries of Object.values(os.networkInterfaces())) {
-    for (const entry of entries ?? []) {
-      if (entry.family === 'IPv4' && !entry.internal) result.push(entry.address);
-    }
-  }
-  return result;
+  // VPN and container adapters (Tailscale, Radmin, ProTUN) answer on a /32 or /8 that a phone will
+  // never route through, and they used to come back first in the list — the copied address simply did
+  // not open. panelAddresses keeps the real LAN interfaces and puts the one sharing the station's
+  // subnet on top.
+  const station = loadConfig().connection?.host ?? null;
+  return panelAddresses(station).map((entry) => entry.address);
 }
 
 export function publicSettings(): PublicSettings {

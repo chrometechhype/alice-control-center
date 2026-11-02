@@ -533,6 +533,18 @@ export async function initStore(): Promise<void> {
     window.addEventListener('acc:unauthorized', () => void handleUnauthorized());
   }
   try {
+    // A phone opened from the shared link arrives with `?token=…`. Making someone type a 32-character
+    // token on a touchscreen is the whole reason «открыть с телефона» felt broken, so the link is
+    // allowed to sign in — and then it removes itself from the address bar and the browser history.
+    const handed = new URLSearchParams(window.location.search).get('token');
+    if (handed) {
+      try {
+        await login(handed);
+      } catch {
+        // A wrong or expired token simply lands on the normal login screen, as before.
+      }
+      window.history.replaceState({}, '', window.location.pathname);
+    }
     const auth = await api.get<AuthStatus>('/auth/status');
     store.auth = auth;
     if (auth.authenticated) await bootstrapApp();
