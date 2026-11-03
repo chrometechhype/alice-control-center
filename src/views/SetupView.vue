@@ -66,6 +66,7 @@ interface FoundHost {
 interface DiscoverResult {
   subnets: string[];
   hosts: FoundHost[];
+  note?: string | null;
 }
 
 const router = useRouter();
@@ -466,6 +467,13 @@ watch(step, (value) => {
                 <span class="field-hint">
                   Нажмите на адрес — он подставится в форму. Точную модель панель назовёт после проверки пароля.
                 </span>
+              </div>
+              <div v-else-if="found?.note" class="alert alert--warn mt-8">
+                <AlertTriangle :size="15" />
+                <div>{{ found.note }}</div>
+              </div>
+              <div v-else-if="found" class="empty" style="padding: 16px">
+                <p>Колонка с SSH не найдена. Проверьте, что станция включена и в той же сети, что и компьютер.</p>
               </div>
             </div>
 

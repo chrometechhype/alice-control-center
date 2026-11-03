@@ -6,6 +6,7 @@ import { AccError } from '../errors.ts';
 import { discoverSshHosts, localSubnets } from '../discovery.ts';
 import { asyncRoute, sendOk } from '../http.ts';
 import { checkHostTools } from '../hostTools.ts';
+import { explainLocalBlock } from '../netPath.ts';
 import { startInstall } from '../tools.ts';
 import { resetFfmpegProbe } from '../audioConvert.ts';
 import { eventLog } from '../events.ts';
@@ -64,7 +65,10 @@ connectionRouter.post(
   asyncRoute(async (req, res) => {
     const timeoutMs = Math.min(Math.max(Number(req.body?.timeoutMs) || 6000, 2000), 15000);
     const hosts = await discoverSshHosts({ timeoutMs });
-    sendOk(res, { subnets: localSubnets(), hosts });
+    // An empty list used to be a dead end. When not even the router answers, the reason is on this
+    // computer, and saying so is the only way the user gets out of it.
+    const note = hosts.length ? null : await explainLocalBlock();
+    sendOk(res, { subnets: localSubnets(), hosts, note });
   }),
 );
 

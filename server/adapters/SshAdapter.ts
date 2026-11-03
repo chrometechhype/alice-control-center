@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { Client, type ClientChannel, type SFTPWrapper } from 'ssh2';
 import type { DeviceConnectionConfig } from '../../shared/types.ts';
 import { AccError } from '../errors.ts';
+import { explainLanFailure } from '../netPath.ts';
 import { dirWalkCommand, parseDirWalk, parseLsLong } from '../parse.ts';
 import { shQuote } from '../util.ts';
 import type {
@@ -21,6 +22,7 @@ const DEFAULT_MAX_BYTES = 2_000_000;
 const MAX_CHANNELS = 3;
 const TRANSIENT_EXEC = /unable to exec|channel open failure|open failed|administratively prohibited|resource shortage/i;
 const SFTP_ABSENT = /exit code 127|subsystem request failed|no such file|not found/i;
+const NETWORK_BLOCKED = /EACCES|EPERM|EHOSTUNREACH|ENETUNREACH|ECONNABORTED|ETIMEDOUT/i;
 
 /**
  * This dropbear runs no sftp-server: the subsystem request comes back as exit code 127. Probing it
@@ -97,16 +99,14 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
       client.on('error', (error) => {
         const wasConnected = this.connected;
         notifyClosed('transport error');
-        if (!wasConnected) {
-          this.emit('state', 'error');
-          finish(
-            new AccError(
-              'SSH_AUTH_FAILED',
-              this.describeError(error),
-              502,
-            ),
-          );
-        }
+        if (wasConnected) return;
+        this.emit('state', 'error');
+        // The diagnosis probes the network and costs a second or two the 12 s budget never planned
+        // for; left running, it would report its own timeout instead of the answer.
+        clearTimeout(timer);
+        void this.explainError(error).then((message) =>
+          finish(new AccError('SSH_CONNECT_FAILED', message, 502)),
+        );
       });
 
       client.on('close', () => {
@@ -873,10 +873,21 @@ export class SshAdapter extends EventEmitter implements StationAdapter {
       return 'SSH отклонил авторизацию: проверьте пользователя, пароль или ключ';
     }
     if (/ECONNREFUSED/i.test(message)) return 'SSH-порт закрыт: проверьте адрес и порт';
-    if (/EHOSTUNREACH|ETIMEDOUT|ENETUNREACH/i.test(message)) return 'Устройство недоступно по сети';
+    if (NETWORK_BLOCKED.test(message)) return 'Устройство недоступно по сети';
     if (/timed out while waiting for handshake/i.test(message)) {
       return 'Колонка не ответила на SSH-рукопожатие: проверьте адрес, порт и что станция включена';
     }
     return message;
+  }
+
+  /**
+   * A socket error is only the symptom. `EACCES` on a LAN address is a filter, not a sleeping
+   * speaker, and a user who is told «недоступно по сети» will reboot the station instead of the VPN.
+   */
+  private async explainError(error: Error): Promise<string> {
+    const text = this.describeError(error);
+    if (!NETWORK_BLOCKED.test(error.message || '')) return text;
+    const diagnosis = await explainLanFailure(this.config.host).catch(() => null);
+    return diagnosis ?? text;
   }
 }
