@@ -4,11 +4,15 @@ import { eventLog } from './events.ts';
 
 /**
  * The station's own sound (Alice's voice, music, the panel's clips) is played by quasar's media
- * daemon through the ALSA PCM named `default`, and that name resolves to the speaker. The station
- * keeps its ALSA config in a read-only rootfs, but `default` ultimately reads `/tmp/asound-vol.conf`,
- * which is a symlink into `/etc` re-created on every boot. Pointing that file at BlueALSA's A2DP
- * source PCM is therefore a temporary, reboot-safe switch — and it needs the media daemon to be
- * restarted, because a running process keeps the ALSA config it already parsed in memory.
+ * daemon through the ALSA PCM named `default`. Where that name is defined differs by firmware: the
+ * Лайт 2 keeps `pcm.!default` in the read-only `/etc/asound.conf`, which then includes the volume
+ * chain from `/tmp/asound-vol.conf` (a symlink into `/etc`, re-created on every boot), while earlier
+ * firmware has no `/tmp` file at all and everything sits in `/etc/asound.conf` on read-only UBIFS.
+ *
+ * So the script picks the file it can actually rewrite: the `/tmp` chain when it exists, otherwise a
+ * copy of `/etc/asound.conf` mounted back over the original. Both are temporary and reboot-safe, and
+ * neither writes to the flash. A running process keeps the ALSA config it already parsed, so the
+ * media daemon has to be restarted for any of it to take effect.
  */
 const SCRIPT_PATH = '/tmp/acc-audio-route.sh';
 const ROUTE_MARK = '# ACC: Bluetooth headphones output';
@@ -17,6 +21,8 @@ const FALLBACK_VOLUME_CONF = '/etc/asound-softvol.conf';
 export const ROUTE_SCRIPT = String.raw`#!/bin/sh
 MARK='# ACC: Bluetooth headphones output'
 VOL=/tmp/asound-vol.conf
+ETC=/etc/asound.conf
+ACOPY=/tmp/acc-asound.conf
 LINK=/tmp/acc-vol-link.txt
 ORIG=/tmp/acc-vol-orig.conf
 FALLBACK=` + FALLBACK_VOLUME_CONF + String.raw`
@@ -113,12 +119,108 @@ restart_mediad() {
   return 1
 }
 
-remember_original() {
-  if [ -L "$VOL" ]; then
-    readlink "$VOL" > "$LINK"
-    cat "$VOL" > "$ORIG"
+# Which file can this firmware be steered through? See the note above: newer layouts keep the volume
+# chain in /tmp, older ones have only the read-only /etc/asound.conf.
+layout_of() {
+  if [ -e "$VOL" ]; then
+    echo tmp
+  elif [ -f "$ETC" ]; then
+    echo etc
+  else
+    echo none
   fi
-  [ -f "$ORIG" ] || cp "$FALLBACK" "$ORIG" 2>/dev/null
+}
+
+# The file that holds, or would hold, our chain right now.
+route_file() {
+  if [ -f "$ACOPY" ]; then
+    echo "$ACOPY"
+  else
+    echo "$VOL"
+  fi
+}
+
+remember_original() {
+  if [ "$1" = tmp ]; then
+    if [ -L "$VOL" ]; then
+      readlink "$VOL" > "$LINK"
+      cat "$VOL" > "$ORIG"
+    fi
+    [ -f "$ORIG" ] || cp "$FALLBACK" "$ORIG" 2>/dev/null
+  else
+    cat "$ETC" > "$ORIG" || return 1
+  fi
+}
+
+# Two definitions of one node leave it to luck which one ALSA keeps, so the stock pcm.!default is
+# taken out before ours is appended. Its braces are counted, not guessed, because the block spans
+# several lines and the file also defines other pcm nodes with the same shape.
+strip_default() {
+  awk '
+    inblock == 0 && /^pcm\.!default[ \t]*\{/ { inblock = 1; depth = 0 }
+    inblock {
+      o = gsub(/\{/, "{"); c = gsub(/\}/, "}"); depth += o - c
+      if (depth <= 0) inblock = 0
+      next
+    }
+    { print }
+  ' "$1"
+}
+
+# The microphone has to survive the switch: whatever the stock default records from is what we keep.
+capture_of() {
+  awk '
+    /^pcm\.!default[ \t]*\{/ { inblock = 1; depth = 0 }
+    inblock {
+      o = gsub(/\{/, "{"); c = gsub(/\}/, "}"); depth += o - c
+      if (match($0, /capture\.pcm[ \t]*"[^"]*"/)) {
+        s = substr($0, RSTART, RLENGTH)
+        sub(/^[^"]*"/, "", s); sub(/"$/, "", s)
+        print s; exit
+      }
+      if (depth <= 0) inblock = 0
+    }
+  ' "$1"
+}
+
+# Alice moves a single ALSA control. Its name is part of the firmware, not of the panel, so it is
+# read from the original config — otherwise the new output would have a volume knob nobody moves.
+volume_control_of() {
+  awk '
+    match($0, /name[ \t]*"[^"]*Playback Volume"/) {
+      s = substr($0, RSTART, RLENGTH)
+      sub(/^[^"]*"/, "", s); sub(/".*$/, "", s)
+      print s; exit
+    }
+  ' "$1"
+}
+
+emit_chain() {
+  strip_default "$1"
+  echo ""
+  echo "$MARK"
+  echo "pcm.acc_bt_raw {"
+  echo "  type plug"
+  echo "  slave.pcm {"
+  echo "    type bluealsa"
+  echo "    device \"$2\""
+  echo "    profile \"a2dp\""
+  echo "  }"
+  echo "}"
+  echo "pcm.acc_bt_out {"
+  echo "  type softvol"
+  echo "  min_dB -60.0"
+  echo "  slave.pcm \"acc_bt_raw\""
+  echo "  control {"
+  echo "    name \"$4\""
+  echo "    card 0"
+  echo "  }"
+  echo "}"
+  echo "pcm.!default {"
+  echo "  type asym"
+  echo "  playback.pcm \"acc_bt_out\""
+  echo "  capture.pcm \"$3\""
+  echo "}"
 }
 
 # The headphones keep their own gain (AVRCP absolute volume), and a freshly paired device usually gets
@@ -159,53 +261,62 @@ case "$1" in
       echo ACC_NO_A2DP
       exit 6
     fi
-    remember_original
+    lay=$(layout_of)
+    if [ "$lay" = none ]; then
+      echo ACC_NO_LAYOUT
+      ls -l "$VOL" "$ETC" "$FALLBACK" 2>&1 | sed 's/^/ACC_LS /'
+      exit 3
+    fi
+    remember_original "$lay" || { echo ACC_NO_ORIGINAL; exit 3; }
     [ -f "$ORIG" ] || { echo ACC_NO_ORIGINAL; exit 3; }
-    if grep -q "$MARK" "$VOL" 2>/dev/null && grep -q "device \"$ADDR\"" "$VOL" && grep -q "pcm.acc_bt_raw" "$VOL"; then
+    target=$VOL
+    [ "$lay" = etc ] && target=$ACOPY
+    cap=$(capture_of "$ORIG")
+    [ -n "$cap" ] || cap=multi_capture
+    ctl=$(volume_control_of "$ORIG")
+    [ -n "$ctl" ] || ctl='Master Playback Volume'
+    if grep -q "$MARK" "$target" 2>/dev/null && grep -q "device \"$ADDR\"" "$target" && grep -q "pcm.acc_bt_raw" "$target"; then
       echo ACC_UNCHANGED
       exit 0
     fi
-    {
-      cat "$ORIG"
-      echo ""
-      echo "$MARK"
-      echo "pcm.acc_bt_raw {"
-      echo "  type plug"
-      echo "  slave.pcm {"
-      echo "    type bluealsa"
-      echo "    device \"$ADDR\""
-      echo "    profile \"a2dp\""
-      echo "  }"
-      echo "}"
-      echo "pcm.acc_bt_out {"
-      echo "  type softvol"
-      echo "  min_dB -60.0"
-      echo "  slave.pcm \"acc_bt_raw\""
-      echo "  control {"
-      echo "    name \"Master Playback Volume\""
-      echo "    card 0"
-      echo "  }"
-      echo "}"
-      echo "pcm.!default {"
-      echo "  type asym"
-      echo "  playback.pcm \"acc_bt_out\""
-      echo "  capture.pcm \"multi_capture\""
-      echo "}"
-    } > /tmp/acc-vol.new 2>/dev/null || { echo ACC_WRITE_FAILED; exit 4; }
-    mv -f /tmp/acc-vol.new "$VOL" || { echo ACC_WRITE_FAILED; exit 4; }
+    { emit_chain "$ORIG" "$ADDR" "$cap" "$ctl"; } > /tmp/acc-vol.new 2>/dev/null || { echo ACC_WRITE_FAILED; exit 4; }
+    if [ "$lay" = etc ] && grep -q "$ETC" /proc/mounts 2>/dev/null; then
+      # The copy is already mounted where ALSA reads it, so the new text goes into that very file:
+      # replacing it by mv would leave the mount pointing at the old inode and the old sound.
+      cat /tmp/acc-vol.new > "$ACOPY" 2>/dev/null || { echo ACC_WRITE_FAILED; exit 4; }
+      rm -f /tmp/acc-vol.new
+    else
+      mv -f /tmp/acc-vol.new "$target" || { echo ACC_WRITE_FAILED; exit 4; }
+      if [ "$lay" = etc ]; then
+        mount --bind "$ACOPY" "$ETC" || { rm -f "$ACOPY"; echo ACC_MOUNT_FAILED; exit 4; }
+        echo ACC_MOUNT_ON
+      fi
+    fi
     set_bt_max
     echo ACC_ROUTE_ON
     restart_mediad
     ;;
   disable)
-    if ! grep -q "$MARK" "$VOL" 2>/dev/null; then
+    target=$(route_file)
+    if ! grep -q "$MARK" "$target" 2>/dev/null; then
       echo ACC_OFF
       exit 0
     fi
-    target=$(cat "$LINK" 2>/dev/null)
+    if [ "$target" = "$ACOPY" ]; then
+      umount "$ETC" 2>/dev/null || umount -l "$ETC" 2>/dev/null
+      if grep -q "$ETC" /proc/mounts 2>/dev/null; then
+        echo ACC_RESTORE_FAILED
+        exit 5
+      fi
+      rm -f "$ACOPY"
+      echo ACC_ROUTE_OFF
+      restart_mediad
+      exit 0
+    fi
+    link=$(cat "$LINK" 2>/dev/null)
     rm -f "$VOL"
-    if [ -n "$target" ]; then
-      ln -s "$target" "$VOL"
+    if [ -n "$link" ]; then
+      ln -s "$link" "$VOL"
     elif [ -f "$ORIG" ]; then
       cp "$ORIG" "$VOL"
     else
@@ -215,13 +326,24 @@ case "$1" in
     restart_mediad
     ;;
   state)
-    if grep -q "$MARK" "$VOL" 2>/dev/null; then
-      addr=$(sed -n 's/.*device "\(..:..:..:..:..:..\)".*/\1/p' "$VOL" | head -1)
+    target=$(route_file)
+    if grep -q "$MARK" "$target" 2>/dev/null; then
+      addr=$(sed -n 's/.*device "\(..:..:..:..:..:..\)".*/\1/p' "$target" | head -1)
       echo "ACC_STATE on $addr"
     else
       echo "ACC_STATE off"
     fi
     overlay_report
+    ;;
+  render)
+    # Test seam: print the chain that would be installed for the config given as $2.
+    addr=AA:BB:CC:DD:EE:FF
+    [ -n "$3" ] && addr=$3
+    cap=$(capture_of "$2")
+    [ -n "$cap" ] || cap=multi_capture
+    ctl=$(volume_control_of "$2")
+    [ -n "$ctl" ] || ctl='Master Playback Volume'
+    emit_chain "$2" "$addr" "$cap" "$ctl"
     ;;
   overlay-on)
     was=$(is_bound && echo bound || echo free)
@@ -387,6 +509,28 @@ export async function switchAudioToHeadphones(
         restarted: false,
         music,
         error: 'Звук остался в колонке: медиа-демон станции не перезапустился. Попробуйте ещё раз через минуту.',
+      };
+    }
+    if (/ACC_NO_LAYOUT/.test(text)) {
+      cached = null;
+      return {
+        on: false,
+        address,
+        restarted: false,
+        music,
+        error:
+          'Прошивка держит вывод звука в файле, с которым панель работать не умеет, — звук остался в колонке. ' +
+          'Этот случай добавляется по одному дампу конфига: напишите в поддержку, модель внесём.',
+      };
+    }
+    if (/ACC_MOUNT_FAILED/.test(text)) {
+      cached = null;
+      return {
+        on: false,
+        address,
+        restarted: false,
+        music,
+        error: 'Станция не позволила подменить свой конфиг ALSA — звук остался в колонке.',
       };
     }
     if (/ACC_NO_ORIGINAL|ACC_WRITE_FAILED|ACC_BAD_ADDRESS|ACC_RESTORE_FAILED/.test(text)) {
