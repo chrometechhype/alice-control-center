@@ -34,7 +34,7 @@ import {
   LITE2_COLORS,
   resetStationLook,
   resetStationModel,
-  STATION_MODEL_GROUPS,
+  SUPPORTED_MODELS,
   setStationLook,
   setStationModel,
   stationLook,
@@ -1068,11 +1068,9 @@ onMounted(() => {
                 @change="onModelChange"
               >
                 <option value="auto">Определить автоматически</option>
-                <optgroup v-for="group in STATION_MODEL_GROUPS" :key="group.title" :label="group.title">
-                  <option v-for="model in group.models" :key="model.kind" :value="model.kind">
-                    {{ model.label }}
-                  </option>
-                </optgroup>
+                <option v-for="model in SUPPORTED_MODELS" :key="model.kind" :value="model.kind">
+                  {{ model.label }}
+                </option>
               </select>
               <p class="field-hint">
                 Панель читает модель по SSH, но считывается она не на каждой прошивке — поэтому её

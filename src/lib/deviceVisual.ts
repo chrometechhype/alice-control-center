@@ -242,18 +242,15 @@ export function resetStationModel(): void {
   }
 }
 
-export const STATION_MODEL_GROUPS: Array<{ title: string; models: Array<{ kind: StationKind; label: string }> }> = [
-  {
-    title: 'Маленькие станции',
-    models: SUPPORTED_KINDS.map((kind) => ({ kind, label: VISUALS[kind].label })),
-  },
-  {
-    title: 'Большие станции',
-    models: (Object.keys(VISUALS) as StationKind[])
-      .filter((kind) => kind !== 'generic' && !SUPPORTED_KINDS.includes(kind))
-      .map((kind) => ({ kind, label: VISUALS[kind].label })),
-  },
-];
+/**
+ * Полный набор функций обещан только маленьким станциям, поэтому в списке выбора они и остаются
+ * единственными: предлагать большую модель, на которой ничего не проверяли, панель не должна.
+ * Определённая по SSH большая станция при этом остаётся подписанной — VISUALS нужен для образа.
+ */
+export const SUPPORTED_MODELS: Array<{ kind: StationKind; label: string }> = SUPPORTED_KINDS.map((kind) => ({
+  kind,
+  label: VISUALS[kind].label,
+}));
 
 export function detectDeviceVisual(info: DeviceInfo | null | undefined): DeviceVisual {
   const haystack = `${info?.modelGuess ?? ''} ${info?.modelRaw ?? ''} ${info?.hostname ?? ''}`.toLowerCase();

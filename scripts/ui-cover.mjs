@@ -18,12 +18,6 @@ const stations = [
   { image: 'public/devices/mini-pro.webp', title: 'Мини 3 Про', note: 'Мини' },
   { image: 'public/devices/mini-clock.webp', title: 'Мини с часами', note: 'Мини' },
   { image: 'public/devices/mini-old.webp', title: 'Мини', note: 'первая Мини' },
-  { image: 'public/devices/max.webp', title: 'Макс', note: 'вне поддержки', off: true },
-  { image: 'public/devices/station2.webp', title: 'Станция 2', note: 'вне поддержки', off: true },
-  { image: 'public/devices/station3.webp', title: 'Станция 3', note: 'вне поддержки', off: true },
-  { image: 'public/devices/duo-max.webp', title: 'Дуо Макс', note: 'вне поддержки', off: true },
-  { image: 'public/devices/midi.webp', title: 'Миди', note: 'вне поддержки', off: true },
-  { image: 'public/devices/street.webp', title: 'Стрит', note: 'вне поддержки', off: true },
 ];
 
 const release = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
@@ -32,7 +26,7 @@ const versionLine = `v${release.version} · MIT`;
 const cards = stations
   .map(
     (station) => `
-      <article class="card${station.accent ? ' card--accent' : ''}${station.off ? ' card--off' : ''}">
+      <article class="card${station.accent ? ' card--accent' : ''}">
         <div class="card-media"><img src="${dataUri(station.image)}" alt=""></div>
         <div class="card-title">${station.title}</div>
         <div class="card-note">${station.accent ? '<i></i>' : ''}${station.note}</div>
@@ -134,16 +128,16 @@ const cover = `<!doctype html>
   }
   .lineup-head span { font-size: 12px; color: #5f7d6d; font-weight: 650; letter-spacing: .05em; }
   .cards {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px;
   }
   .card {
     position: relative;
-    height: 158px;
-    border-radius: 26px;
+    height: 268px;
+    border-radius: 30px;
     background: rgba(255,255,255,.042);
     border: 1px solid rgba(255,255,255,.085);
     display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
-    padding: 10px 8px 16px;
+    padding: 14px 10px 22px;
     overflow: hidden;
   }
   .card::after {
@@ -158,20 +152,17 @@ const cover = `<!doctype html>
   }
   .card-media { flex: 1; width: 100%; display: grid; place-items: center; padding-top: 6px; }
   .card-media img {
-    width: 104px; height: 104px; object-fit: contain;
+    width: 150px; height: 150px; object-fit: contain;
     filter: drop-shadow(0 16px 20px rgba(0,0,0,.42));
   }
-  .card--accent .card-media img { width: 112px; height: 112px; }
-  .card--off .card-media img { opacity: .34; filter: saturate(.25) drop-shadow(0 12px 16px rgba(0,0,0,.4)); }
-  .card--off .card-title { color: #93a49b; }
-  .card--off .card-note { color: #7d6f6f; }
+  .card--accent .card-media img { width: 162px; height: 162px; }
   .card-title {
-    font-size: 13px; font-weight: 700; color: #eef8f1; letter-spacing: -.01em;
+    font-size: 15px; font-weight: 700; color: #eef8f1; letter-spacing: -.01em;
     white-space: nowrap;
   }
   .card-note {
     display: flex; align-items: center; gap: 5px;
-    margin-top: 4px; font-size: 10px; font-weight: 650; color: #6e8a7a;
+    margin-top: 8px; font-size: 11px; font-weight: 650; color: #6e8a7a;
     letter-spacing: .08em; text-transform: uppercase;
   }
   .card--accent .card-note { color: #86dda9; }
@@ -214,7 +205,7 @@ const cover = `<!doctype html>
   </div>
 
   <div class="lineup">
-    <div class="lineup-head"><b>Лайт и Мини — поддержка</b><span>большие станции — вне поддержки</span></div>
+    <div class="lineup-head"><b>Лайт и Мини — поддержка</b><span>только маленькие станции</span></div>
     <div class="cards">${cards}</div>
   </div>
 

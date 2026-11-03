@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { DeviceInfo } from '../shared/types.ts';
 import {
   LITE2_COLORS,
-  STATION_MODEL_GROUPS,
   SUPPORTED_KINDS,
+  SUPPORTED_MODELS,
   detectDeviceVisual,
   resetStationLook,
   resetStationModel,
@@ -124,16 +124,13 @@ describe('Явный выбор модели', () => {
     expect(storage.has('acc-station-model')).toBe(false);
   });
 
-  it('список делится на маленькие и большие станции, «generic» не предлагается', () => {
-    expect(STATION_MODEL_GROUPS.map((group) => group.title)).toEqual([
-      'Маленькие станции',
-      'Большие станции',
-    ]);
-    const all = STATION_MODEL_GROUPS.flatMap((group) => group.models.map((model) => model.kind));
-    expect(new Set(all).size).toBe(all.length);
-    expect(all).not.toContain('generic');
-    expect(STATION_MODEL_GROUPS[0].models.map((model) => model.kind)).toEqual(SUPPORTED_KINDS);
-    expect(all).toEqual(expect.arrayContaining(['lite2', 'max', 'station3', 'duo-max', 'mini2']));
+  it('в списке выбора только маленькие станции: ни больших, ни «generic»', () => {
+    const kinds = SUPPORTED_MODELS.map((model) => model.kind);
+    expect(kinds).toEqual(SUPPORTED_KINDS);
+    expect(new Set(kinds).size).toBe(kinds.length);
+    for (const excluded of ['generic', 'max', 'station2', 'station3', 'duo-max', 'midi', 'street', 'mini2', 'mini2-clock']) {
+      expect(kinds).not.toContain(excluded);
+    }
   });
 });
 
