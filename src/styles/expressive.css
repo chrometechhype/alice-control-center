@@ -188,8 +188,8 @@ body,
 }
 
 .sidebar {
-  top: 14px;
-  height: calc(100vh - 28px);
+  top: calc(14px + var(--safe-top));
+  height: calc(100vh - 28px - var(--safe-top) - var(--safe-bottom));
   border-radius: 32px;
   border: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
   background: color-mix(in srgb, var(--surface) 92%, transparent);
@@ -384,7 +384,7 @@ body,
 }
 
 .topbar {
-  top: 14px;
+  top: calc(14px + var(--safe-top));
   margin: 0 0 4px;
   min-height: 64px;
   padding: 10px 18px;
@@ -1433,7 +1433,7 @@ a.device-mini {
 
   .sidebar {
     position: fixed;
-    inset: 8px auto 8px 8px;
+    inset: calc(8px + var(--safe-top)) auto calc(8px + var(--safe-bottom)) calc(8px + var(--safe-left));
     height: auto;
     width: min(304px, 88vw);
     border-radius: 32px;
@@ -1447,7 +1447,7 @@ a.device-mini {
   }
 
   .topbar {
-    top: 8px;
+    top: calc(8px + var(--safe-top));
     min-height: 60px;
     border-radius: 22px;
     padding: 8px 12px;
@@ -1468,7 +1468,7 @@ a.device-mini {
   }
 
   .page {
-    padding: 12px 10px 40px;
+    padding: 12px calc(10px + var(--safe-right)) calc(40px + var(--safe-bottom)) calc(10px + var(--safe-left));
   }
 
   .hero {
@@ -2148,4 +2148,41 @@ a.device-mini {
   background: var(--surface-2);
   color: var(--muted);
   font-size: 11.5px;
+}
+
+/* ---------- Phones ---------- */
+
+/* Every blurred layer costs the phone GPU a full recomposite per scroll frame, and the panel has
+   two of them always on screen. The same surface unblurred is the same colour and holds the frames. */
+@media (pointer: coarse) {
+  .topbar,
+  .sidebar,
+  .modal-backdrop,
+  .sidebar-scrim {
+    backdrop-filter: none;
+  }
+
+  .topbar,
+  .sidebar {
+    background: var(--surface);
+  }
+}
+
+/* The live dot pulses by growing a box-shadow, which repaints a strip of the top bar every frame
+   around the clock. On a phone that is the frame the finger is waiting for, so it breathes by
+   opacity instead — the compositor does that without touching pixels. */
+@keyframes m3Breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (pointer: coarse) {
+  .dot--live {
+    animation-name: m3Breathe;
+  }
 }

@@ -2,6 +2,13 @@
 @import '@fontsource/jetbrains-mono/index.css';
 
 :root {
+  /* Phones draw the WebView under the status bar and the gesture pill, so the panel has to step
+     back by whatever the device reports. On a desktop both are 0 px and nothing moves. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
   --font-sans: 'Inter Variable', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
 
