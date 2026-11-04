@@ -112,7 +112,9 @@ export function createApp(): AppBundle {
     sendError(res, 404, 'NOT_FOUND', 'Маршрут не найден');
   });
 
-  const distDir = path.join(projectRoot, 'dist');
+  // The phone build cannot sit in a project directory: the APK is read-only, so the wrapper says
+  // explicitly where the built panel was unpacked next to the node bundle.
+  const distDir = process.env.ACC_DIST_DIR ?? path.join(projectRoot, 'dist');
   if (fs.existsSync(path.join(distDir, 'index.html'))) {
     app.use(express.static(distDir, { index: false, maxAge: '1h' }));
     app.use((req, res, next) => {

@@ -19,6 +19,12 @@ export const backupsDir = path.join(dataDir, 'backups');
 export const tmpDir = path.join(dataDir, 'tmp');
 export const uploadsDir = path.join(dataDir, 'uploads');
 export const configFile = path.join(dataDir, 'config.json');
+
+/**
+ * The APK bakes this in. Everything the panel can only do on a computer — run adb or ffmpeg, download
+ * a tool, edit the Windows firewall, reinstall itself — has to say so honestly instead of failing.
+ */
+export const onPhone = process.env.ACC_MOBILE === '1';
 export const eventsFile = path.join(dataDir, 'events.jsonl');
 export const ledPresetsFile = path.join(dataDir, 'led-presets.json');
 export const scenariosFile = path.join(dataDir, 'scenarios.json');
@@ -133,6 +139,7 @@ export function publicSettings(): PublicSettings {
     autoConnect: config.settings.autoConnect,
     lanAddresses: lanAddresses(),
     lanTokenSet: Boolean(config.lanToken),
+    phone: onPhone,
   };
 }
 

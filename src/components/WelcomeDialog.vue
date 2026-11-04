@@ -20,6 +20,7 @@ const step = ref<1 | 2>(1);
 const visual = computed(() => detectDeviceVisual(store.info));
 const connected = computed(() => isConnected.value && Boolean(store.info));
 const canCustomize = computed(() => connected.value && visual.value.kind === 'lite2');
+const phone = computed(() => store.settings?.phone === true);
 
 onMounted(maybeShowWelcome);
 
@@ -69,7 +70,8 @@ function goSetup(): void {
             <h2>Всё управление станцией — в одном окне</h2>
             <p>
               Звуки, LED-кольцо, Bluetooth, файлы, бэкапы, сценарии и Fun Lab. Команды идут через
-              локальный backend и SSH: пароль остаётся на компьютере и не попадает в браузер.
+              {{ phone ? 'встроенный в приложение' : 'локальный' }} backend и SSH: пароль остаётся {{
+              phone ? 'в этом приложении' : 'на компьютере и не попадает в браузер' }}.
             </p>
             <div class="welcome-points">
               <span>Звук и LED</span>
@@ -154,12 +156,12 @@ function goSetup(): void {
           <h2>Станция ещё не подключена</h2>
           <p>
             Панель пока не знает модель и цвет корпуса, поэтому не показывает станцию. Мастер
-            подключения попросит адрес, порт и root-пароль — они сохранятся только на этом
-            компьютере.
+            подключения попросит адрес, порт и root-пароль — они сохранятся только
+            {{ phone ? 'в этом приложении' : 'на этом компьютере' }}.
           </p>
           <ul class="welcome-connect__list">
-            <li>Пароль не попадает в браузер и в исходный код.</li>
-            <li>Backend слушает только 127.0.0.1, пока вы не включите доступ с телефона.</li>
+            <li>{{ phone ? 'Пароль не покидает приложение.' : 'Пароль не попадает в браузер и в исходный код.' }}</li>
+            <li>{{ phone ? 'Backend работает внутри приложения и слушает только 127.0.0.1.' : 'Backend слушает только 127.0.0.1, пока вы не включите доступ с телефона.' }}</li>
           </ul>
         </div>
       </div>

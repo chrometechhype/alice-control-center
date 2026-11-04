@@ -74,9 +74,14 @@ function candidateIps(): Map<string, string | undefined> {
 
 function runArp(): Promise<string> {
   return new Promise((resolve) => {
-    execFile('arp', ['-a'], { windowsHide: true, timeout: 4000 }, (_error, stdout) => {
-      resolve(stdout ?? '');
-    });
+    try {
+      execFile('arp', ['-a'], { windowsHide: true, timeout: 4000 }, (_error, stdout) => {
+        resolve(stdout ?? '');
+      });
+    } catch {
+      // A platform with no host shell at all (the phone build) throws here rather than calling back.
+      resolve('');
+    }
   });
 }
 

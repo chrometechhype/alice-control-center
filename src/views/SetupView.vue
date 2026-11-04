@@ -100,6 +100,13 @@ const steps = [
   { id: 4, label: 'Итог' },
 ];
 
+// On the phone there is no computer to prepare: adb and ffmpeg belong to the machine the panel used
+// to run on, and here the panel is the app itself. The step is dropped, and the numbering follows.
+const phone = computed(() => store.settings?.phone === true);
+const visibleSteps = computed(() => (phone.value ? steps.filter((item) => item.id !== 1) : steps));
+const firstStep = computed(() => (phone.value ? 2 : 1));
+const ord = (id: number) => (phone.value && id > 1 ? id - 1 : id);
+
 const hasSshKey = computed(() => form.privateKeyPath.trim().length > 0);
 const capabilityRows = computed(() => {
   const caps = probe.value?.capabilities;
@@ -291,7 +298,7 @@ function next(): void {
 
 function back(): void {
   error.value = '';
-  if (step.value > 1) step.value -= 1;
+  if (step.value > firstStep.value) step.value -= 1;
 }
 
 function goto(target: number): void {
@@ -310,6 +317,10 @@ onMounted(() => {
     };
     step.value = 4;
   }
+  if (phone.value) {
+    step.value = Math.max(step.value, firstStep.value);
+    return;
+  }
   void loadTools();
 });
 
@@ -325,7 +336,8 @@ watch(step, (value) => {
         <div>
           <h1 style="font-size: 24px; font-weight: 740; letter-spacing: -0.025em">Мастер подключения</h1>
           <p class="muted" style="font-size: 12.5px; margin-top: 5px">
-            Проверка инструментов, SSH-доступ и реальные возможности прошивки. Ничего не устанавливается автоматически.
+            <template v-if="phone">SSH-доступ и реальные возможности прошивки.</template>
+            <template v-else>Проверка инструментов, SSH-доступ и реальные возможности прошивки. Ничего не устанавливается автоматически.</template>
           </p>
         </div>
         <span class="pill" :class="isConnected ? 'pill--ok' : 'pill--warn'">
@@ -336,7 +348,7 @@ watch(step, (value) => {
 
       <div class="steps">
         <button
-          v-for="item in steps"
+          v-for="item in visibleSteps"
           :key="item.id"
           type="button"
           class="step"
@@ -344,7 +356,7 @@ watch(step, (value) => {
           style="cursor: pointer"
           @click="goto(item.id)"
         >
-          <span class="step-num"><Check v-if="step > item.id" :size="11" /><template v-else>{{ item.id }}</template></span>
+          <span class="step-num"><Check v-if="step > item.id" :size="11" /><template v-else>{{ ord(item.id) }}</template></span>
           {{ item.label }}
         </button>
       </div>
@@ -422,7 +434,7 @@ watch(step, (value) => {
           <article v-else-if="step === 2" class="card">
             <div class="card-head">
               <div>
-                <div class="card-title"><Plug :size="15" /> Шаг 2. Параметры SSH</div>
+                <div class="card-title"><Plug :size="15" /> Шаг {{ ord(2) }}. Параметры SSH</div>
                 <div class="card-sub">Пароль уходит только на локальный backend и не появляется в frontend-сборке.</div>
               </div>
             </div>
@@ -540,7 +552,7 @@ watch(step, (value) => {
           <article v-else-if="step === 3" class="card">
             <div class="card-head">
               <div>
-                <div class="card-title"><ShieldCheck :size="15" /> Шаг 3. Проверка возможностей</div>
+                <div class="card-title"><ShieldCheck :size="15" /> Шаг {{ ord(3) }}. Проверка возможностей</div>
                 <div class="card-sub">Показываем только то, что реально ответило на устройстве.</div>
               </div>
               <span class="pill pill--ok"><Check :size="12" /> SSH работает</span>
@@ -599,7 +611,7 @@ watch(step, (value) => {
           <article v-else class="card">
             <div class="card-head">
               <div>
-                <div class="card-title"><Check :size="15" /> Шаг 4. Итог</div>
+                <div class="card-title"><Check :size="15" /> Шаг {{ ord(4) }}. Итог</div>
                 <div class="card-sub">Подключение будет сохранено в data/config.json с правами 0600.</div>
               </div>
             </div>
@@ -654,7 +666,7 @@ watch(step, (value) => {
               </div>
               <div class="alert">
                 <ShieldCheck :size="15" />
-                <div>Пароль не сохраняется в исходниках и не отдаётся в браузер.</div>
+                <div>{{ phone ? 'Пароль хранится только в этом приложении и никуда не уходит.' : 'Пароль не сохраняется в исходниках и не отдаётся в браузер.' }}</div>
               </div>
               <div class="alert">
                 <ShieldCheck :size="15" />

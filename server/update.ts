@@ -4,7 +4,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import AdmZip from 'adm-zip';
 import type { UpdateInfo, UpdateInstallResult } from '../shared/types.ts';
-import { dataDir, projectRoot } from './config.ts';
+import { dataDir, onPhone, projectRoot } from './config.ts';
 import { AccError } from './errors.ts';
 import { eventLog } from './events.ts';
 import { shutdownForUpdate } from './lifecycle.ts';
@@ -61,7 +61,12 @@ function ensureUpdatesDir(): void {
   fs.mkdirSync(updatesDir, { recursive: true });
 }
 
+/** The phone APK is read-only and has no host shell, so the unpack-and-restart step cannot exist there. */
 export function currentVersion(): string {
+  // The phone bundle is baked with its version: inside the APK there is no package.json next to the
+  // working directory, and '0.0.0' would have the panel claim an update is available forever.
+  const baked = process.env.ACC_APP_VERSION?.trim();
+  if (baked) return baked;
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')) as {
       version?: string;
@@ -371,8 +376,12 @@ async function buildInfo(release: GithubRelease): Promise<CachedUpdate> {
     currentVersion: version,
     latestVersion: latest,
     updateAvailable: compareVersions(latest, version) > 0,
-    canInstall: Boolean(asset),
-    reason: asset ? undefined : 'В релизе нет ZIP-архива для установки.',
+    canInstall: Boolean(asset) && !onPhone,
+    reason: onPhone
+      ? 'На телефоне панель обновляется новым APK, сама она себя не переустанавливает.'
+      : asset
+        ? undefined
+        : 'В релизе нет ZIP-архива для установки.',
     repo: UPDATE_REPO,
     releaseUrl: release.html_url,
     notes: (release.body ?? '').slice(0, 8000),
@@ -573,6 +582,13 @@ function scheduleShutdown(): void {
 }
 
 export async function installUpdate(confirm: string): Promise<UpdateInstallResult> {
+  if (onPhone) {
+    throw new AccError(
+      'UPDATE_ON_PHONE',
+      'На телефоне панель обновляется установкой нового APK — сама она себя не переустанавливает.',
+      400,
+    );
+  }
   if (confirm !== CONFIRM_WORD) {
     throw new AccError('UPDATE_NOT_CONFIRMED', `Для установки введите «${CONFIRM_WORD}».`, 400);
   }

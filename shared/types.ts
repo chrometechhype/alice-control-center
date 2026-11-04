@@ -210,6 +210,8 @@ export interface PublicSettings {
   autoConnect: boolean;
   lanAddresses: string[];
   lanTokenSet: boolean;
+  /** The panel running as a phone app has no computer behind it: no host tools, no browser to warn about. */
+  phone: boolean;
 }
 
 export type AiProviderId =

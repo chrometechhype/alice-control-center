@@ -44,7 +44,9 @@ async function retry(): Promise<void> {
       <RouterLink to="/setup" class="btn">Мастер подключения</RouterLink>
     </div>
     <ul class="gate-hints">
-      <li>Колонка включена и в той же сети, что и этот компьютер.</li>
+      <li>
+        Колонка включена и в той же сети, что и {{ store.settings?.phone ? 'телефон' : 'этот компьютер' }}.
+      </li>
       <li>SSH отвечает на порту из настроек, логин root.</li>
       <li>После перезагрузки станции подождите минуту — панель пробует сама.</li>
     </ul>
