@@ -25,6 +25,17 @@
 
         </activity>
 
+        <!-- Without this the whole app, node engine and SSH connection included, is the first thing
+             Samsung throws away when the panel goes to the background. -->
+        <service
+            android:name=".PanelService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="A local server keeps the smart speaker panel reachable while the screen is off." />
+        </service>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -42,4 +53,8 @@
     <!-- Android 16 stops an app from touching the LAN until it is allowed to; the whole point of the
          panel is reaching the station on the hotspot network. -->
     <uses-permission android:name="android.permission.READ_LOCAL_NETWORKS" />
+    <!-- The panel is a server the user asked to keep running, so it is allowed to say so. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

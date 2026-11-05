@@ -35,6 +35,28 @@
       var BACKEND = 'http://127.0.0.1:8722/';
       var deadline = Date.now() + 60000;
 
+      // The panel is built on color-mix() and dynamic viewport units. An old phone does not have them
+      // and would show a page of unreadable boxes; saying which piece is missing, with the WebView
+      // version, is the only way a friend can tell us what to fix.
+      function outdated() {
+        var missing = [];
+        var supports = typeof CSS !== 'undefined' && CSS.supports;
+        if (!supports) return 'Встроенный браузер слишком старый даже для проверки возможностей. Обновите Android System WebView.';
+        if (!CSS.supports('color', 'color-mix(in srgb, red 50%, blue)')) missing.push('цветовых формул');
+        if (!CSS.supports('height', '100dvh')) missing.push('динамической высоты');
+        if (!missing.length) return null;
+        var chrome = (navigator.userAgent.match(/Chrome\/(\d+)/) || [])[1];
+        return 'Встроенному браузеру телефона не хватает ' + missing.join(' и ') +
+          (chrome ? ' (WebView ' + chrome + '). Обновите Android System WebView и откройте заново.' :
+            '. Обновите Android System WebView и откройте заново.');
+      }
+
+      function stop(reason) {
+        document.body.className = 'failed';
+        document.getElementById('title').textContent = 'Телефон не потянет интерфейс';
+        document.getElementById('note').textContent = reason;
+      }
+
       function fail() {
         document.body.className = 'failed';
         document.getElementById('title').textContent = 'Бэкенд не отвечает';
@@ -49,7 +71,13 @@
 
       function wait(ms) { return new Promise(function (r) { setTimeout(r, ms) }) }
 
-      async function poll() {
+      function poll() {
+        var reason = outdated();
+        if (reason) { stop(reason); return Promise.resolve(); }
+        return run();
+      }
+
+      async function run() {
         for (;;) {
           try {
             await fetch(BACKEND + 'api/health', { mode: 'no-cors', cache: 'no-store' });
