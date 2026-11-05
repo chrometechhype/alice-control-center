@@ -9,11 +9,8 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
-        // The Node runtime alone is ~85 MB per ABI, and three of them made this APK 269 MB.
-        // A real release should ship split APKs; for the phone in hand, arm64 is enough.
-        ndk {
-            abiFilters 'arm64-v8a'
-        }
+        // The Node runtime alone is ~85 MB per ABI, and three of them made this APK 269 MB. Which ABIs
+        // get packaged is decided by the `splits` block below; listing them here as well is a build error.
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -25,6 +22,17 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    // One file per architecture: a phone that cannot run arm64 code is not going to say why, it just
+    // refuses the install, and an old Galaxy is exactly the case where that answer matters.
+    splits {
+        abi {
+            enable = true
+            reset()
+            include 'arm64-v8a', 'armeabi-v7a'
+            universalApk = false
         }
     }
 }
