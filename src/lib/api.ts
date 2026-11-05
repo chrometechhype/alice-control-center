@@ -115,8 +115,8 @@ export const api = {
   delete<T>(path: string, body: unknown = {}): Promise<T> {
     return request<T>(path, jsonInit('DELETE', body));
   },
-  form<T>(path: string, form: FormData): Promise<T> {
-    return request<T>(path, { method: 'POST', body: form }, 120_000);
+  form<T>(path: string, form: FormData, timeoutMs = 120_000): Promise<T> {
+    return request<T>(path, { method: 'POST', body: form }, timeoutMs);
   },
 };
 

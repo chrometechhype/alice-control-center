@@ -26,6 +26,7 @@ import OfflineState from '@/components/OfflineState.vue';
 import Modal from '@/components/Modal.vue';
 import VolumeControl from '@/components/VolumeControl.vue';
 import { ApiError, api, apiUrl, errorMessage, triggerDownload } from '@/lib/api';
+import { playFromStation } from '@/lib/audioForStation';
 import { everConnected, isConnected, pushToast, refreshBackups } from '@/lib/store';
 import { formatBytes, formatRelative, soundCategoryLabel } from '@/lib/format';
 
@@ -75,14 +76,6 @@ const publishConflict = ref(false);
 
 const deleteTarget = ref<SoundFile | null>(null);
 const deleting = ref(false);
-
-/** The station only ships `aplay`, so a long clip may still be playing when the call returns. */
-interface StationPlayResult {
-  player: string;
-  seconds: number;
-  converted: boolean;
-  finished: boolean;
-}
 
 /** Alice speaks through the station's own TTS capability — no player and no file are involved. */
 interface AliceSpeechResult {
@@ -216,7 +209,7 @@ async function playOnStation(file: SoundFile): Promise<void> {
   if (stationBusy.value) return;
   stationBusy.value = file.path;
   try {
-    const result = await api.post<StationPlayResult>('/audio/play', { path: file.path }, 200_000);
+    const result = await playFromStation(file.path);
     const detail = [
       `через ${result.player}`,
       result.converted ? 'перекодировано в WAV 48 кГц' : null,

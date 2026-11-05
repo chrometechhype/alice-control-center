@@ -1,6 +1,8 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { z } from 'zod';
 import type { AudioState } from '../../shared/types.ts';
+import { isStationWav } from '../audioConvert.ts';
 import { ACTION_READY_WAIT_MS, connectionManager } from '../connection.ts';
 import { AccError } from '../errors.ts';
 import { eventLog } from '../events.ts';
@@ -8,11 +10,17 @@ import { asyncRoute, sendOk } from '../http.ts';
 import { parseAmixerMaster } from '../parse.ts';
 import { speakWithAlice, type AliceSpeechResult } from '../aliceVoice.ts';
 import { assertPlayableSoundPath } from '../security/paths.ts';
-import { findPlayers, playDeviceFile } from '../voice.ts';
+import { findPlayers, playBufferOnStation, playDeviceFile } from '../voice.ts';
 import { percentToLevel, percentToRaw, rawToPercent } from '../volumeScale.ts';
 import { clamp } from '../util.ts';
 
 export const audioRouter = Router();
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 24 * 1024 * 1024, files: 1 },
+  defParamCharset: 'utf8',
+});
 
 /** ALSA `Master` is the same control Alice's own `set_volume.sh` writes, so both stay in sync. */
 async function readMaster(): Promise<AudioState> {
@@ -172,6 +180,40 @@ audioRouter.post(
       details: { ...played, path: remotePath },
     });
     sendOk(res, { ...played, path: remotePath });
+  }),
+);
+
+/**
+ * Plays audio the panel could not decode itself. A phone has no ffmpeg, but the browser it runs the
+ * panel in does have hardware decoders, so the client converts the clip and brings the finished PCM:
+ * by the time the bytes reach this route there is nothing left to decode, and no external binary is
+ * needed anywhere. The station's `aplay` is unforgiving, so a file that is not PCM16 is refused here
+ * rather than passed on to fail on the device.
+ */
+audioRouter.post(
+  '/play-decoded',
+  upload.single('file'),
+  asyncRoute(async (req, res) => {
+    const file = req.file;
+    if (!file || !file.buffer.length) throw new AccError('FILE_REQUIRED', 'Не передан аудиофайл', 400);
+    if (!isStationWav(file.buffer)) {
+      throw new AccError(
+        'NOT_STATION_PCM',
+        'Панель прислала не PCM16 WAV — станция такой звук не примет',
+        415,
+      );
+    }
+    const adapter = await connectionManager.awaitReady(ACTION_READY_WAIT_MS, { verifyShell: true });
+    const played = await playBufferOnStation(adapter, file.buffer, 'wav');
+    eventLog.append({
+      level: 'info',
+      module: 'audio',
+      operation: 'play-decoded',
+      result: 'ok',
+      message: `Играем подготовленный звук (${Math.round(file.size / 1024)} КБ PCM)`,
+      details: { ...played },
+    });
+    sendOk(res, played);
   }),
 );
 
